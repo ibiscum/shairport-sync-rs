@@ -1,0 +1,92 @@
+name: Debian Smoke Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  debian-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Avahi tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y avahi-daemon avahi-utils
+          sudo systemctl start avahi-daemon || sudo service avahi-daemon start
+
+      - name: Ensure scripts are executable
+        run: |
+          chmod +x scripts/debian-smoke-test-json.sh
+
+      - name: Run smoke test and enforce pass status
+        shell: bash
+        run: |
+          set -euo pipefail
+          json_output="$(./scripts/debian-smoke-test-json.sh)"
+          echo "$json_output"
+
+          status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["status"])' "$json_output")"
+          if [[ "$status" != "passed" ]]; then
+            echo "Smoke test reported status=$status"
+            exit 1
+          fi
+
+  smoke-debug-artifacts:
+    name: Upload Smoke Debug Logs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: debian-smoke
+    if: ${{ failure() && needs.debian-smoke.result == 'failure' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Avahi tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y avahi-daemon avahi-utils
+          sudo systemctl start avahi-daemon || sudo service avahi-daemon start
+
+      - name: Ensure scripts are executable
+        run: |
+          chmod +x scripts/debian-smoke-test-json.sh
+
+      - name: Re-run smoke test to capture debug log
+        shell: bash
+        run: |
+          set +e
+          ./scripts/debian-smoke-test-json.sh >/tmp/shairport-sync-rs-smoke-result.json
+          echo "Diagnostic rerun result:"
+          cat /tmp/shairport-sync-rs-smoke-result.json
+          exit 0
+
+      - name: Upload smoke logs artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-debug-logs
+          path: |
+            /tmp/shairport-sync-rs-smoke.log
+            /tmp/shairport-sync-rs-smoke-result.json
+          if-no-files-found: warn

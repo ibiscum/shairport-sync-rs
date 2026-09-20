@@ -69,4 +69,34 @@ mod tests {
         let expected = vec![0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x7F];
         assert_eq!(out, expected);
     }
+
+    #[test]
+    fn s16le_clamps_and_rounds_half_steps() {
+        let samples = [-2.0_f32, -0.5_f32, 0.5_f32, 2.0_f32];
+        let mut out = Vec::<u8>::new();
+
+        write_samples(&mut out, &samples, OutputSampleFormat::S16Le);
+
+        let expected: Vec<u8> = [i16::MIN + 1, -16_384_i16, 16_384_i16, i16::MAX]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn s24le_clamps_and_rounds_half_steps() {
+        let samples = [-2.0_f32, -0.5_f32, 0.5_f32, 2.0_f32];
+        let mut out = Vec::<u8>::new();
+
+        write_samples(&mut out, &samples, OutputSampleFormat::S24Le);
+
+        let expected = vec![
+            0x01, 0x00, 0x80, // -1.0 (clamped)
+            0x00, 0x00, 0xC0, // -0.5
+            0x00, 0x00, 0x40, // 0.5
+            0xFF, 0xFF, 0x7F, // 1.0 (clamped)
+        ];
+        assert_eq!(out, expected);
+    }
 }

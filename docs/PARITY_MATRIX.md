@@ -26,25 +26,25 @@ Implement in shairport-sync-rs:
 
 | Subsystem | shairport-sync (C) reference | shairplay-rust capability | shairport-sync-rs work required | Status |
 |---|---|---|---|---|
-| Main runtime and process lifecycle | shairport.c | RaopServer lifecycle exists; library-first | Build executable, signals, startup/shutdown orchestration, runtime state machine | TODO |
-| Discovery (mDNS/Bonjour) | mdns.c + mdns_*.c | Built-in discovery in net/mdns.rs | Expose equivalent runtime options (name, interfaces, identity) and diagnostics | TODO |
+| Main runtime and process lifecycle | shairport.c | RaopServer lifecycle exists; library-first | Executable startup/shutdown and Ctrl+C path are wired; daemon mode/service supervision still pending | IN PROGRESS |
+| Discovery (mDNS/Bonjour) | mdns.c + mdns_*.c | Built-in discovery in net/mdns.rs | Basic discovery works via backend crate; runtime interface/identity diagnostics still need parity options | IN PROGRESS |
 | RTSP/RAOP protocol handling | rtsp.c, rtp.c, ap2_* modules | Implemented in raop/* and proto/* | Integrate callbacks and configuration mapping from user config to builder options | TODO |
 | AP1 audio path | rtp.c + decoders | AP1 supported (ALAC/L16, optional encryption modes) | Verify sender interoperability matrix and map compatibility knobs | TODO |
 | AP2 audio path | ap2_buffered_audio_processor.c + related | AP2 supported with pairing, encrypted transport, buffered/realtime audio | Wire AP2 mode defaults and expose pairing persistence controls | TODO |
 | Timing and sync | classic NTP + NQPTP external model | AP1 NTP in crate; AP2 has PTP sink and partial unwired scheduling | Define target parity: acceptable initial sync behavior vs full clock-sync parity milestone | TODO |
-| Audio decode/transcode/mixdown | ffmpeg/libsoxr pipeline | AAC/ALAC decode, f32 output, optional resample/mixdown in crate | Add output conversion and backend-specific device format negotiation | TODO |
-| Audio backend abstraction | audio.c + audio_alsa.c/audio_pw.c/... | Not provided by backend crate (app responsibility) | Implement Rust backend trait and concrete adapters per target platform | TODO |
+| Audio decode/transcode/mixdown | ffmpeg/libsoxr pipeline | AAC/ALAC decode, f32 output, optional resample/mixdown in crate | Output format conversion exists for pipe/stdout paths; broader device negotiation parity remains | IN PROGRESS |
+| Audio backend abstraction | audio.c + audio_alsa.c/audio_pw.c/... | Not provided by backend crate (app responsibility) | Rust backend abstraction implemented with null/stdout/pipe and Linux ALSA; more backends pending | IN PROGRESS |
 | Metadata extraction and dispatch | metadata/* + metadata options | Metadata forwarding hooks are available | Implement metadata fan-out: pipe, multicast, D-Bus, MPRIS, MQTT payload model | TODO |
 | DACP / remote control (Classic) | dacp.c | dacp module exists in crate | Build app-facing remote control bridge and expose via IPC | TODO |
 | D-Bus interface | dbus-service.c | Not in crate | Rebuild native D-Bus API and settings controls | TODO |
 | MPRIS interface | mpris-service.c | Not in crate | Rebuild MPRIS-like interface and behavior compatibility | TODO |
 | MQTT integration | mqtt.c | Not in crate | Implement MQTT publisher/subscriber and command handling policy | TODO |
-| Config file compatibility | scripts/shairport-sync.conf + parser in C runtime | Builder API options exist but no shairport-sync.conf parser | Implement compatibility config parser and precedence (CLI vs file) | TODO |
-| Command-line parity | man page + getopt/popt paths | No dedicated CLI app in backend | Implement CLI switches, help/version output, and migration-safe aliases | TODO |
-| Logging and diagnostics | common.c + debug paths | Backend has diagnostics features | Build unified structured logging + syslog/journal output modes | TODO |
+| Config file compatibility | scripts/shairport-sync.conf + parser in C runtime | Builder API options exist but no shairport-sync.conf parser | TOML config + CLI precedence + validation are implemented; legacy shairport-sync.conf compatibility layer still pending | IN PROGRESS |
+| Command-line parity | man page + getopt/popt paths | No dedicated CLI app in backend | Core CLI switches/help/version path implemented; migration aliases/full flag parity still pending | IN PROGRESS |
+| Logging and diagnostics | common.c + debug paths | Backend has diagnostics features | Structured tracing and startup/shutdown diagnostics exist; syslog/journal parity still pending | IN PROGRESS |
 | Daemon/service operation | libdaemon/systemd helpers | Not in crate | Implement foreground/background policy and systemd-friendly behavior | TODO |
 | Build/package outputs | autotools packaging scripts | Rust crate packaging exists only for backend | Add distro packaging, service files, config install layout | TODO |
-| Test strategy | tests/ and integration practices in C project | Strong crate test coverage exists | Add app-level parity tests, end-to-end sender scenarios, config compatibility tests | TODO |
+| Test strategy | tests/ and integration practices in C project | Strong crate test coverage exists | App-level unit/regression tests are in place; Debian smoke scripts and CI workflow added; sender-matrix E2E still pending | IN PROGRESS |
 
 ## Functional Priority for Parity
 1. Audio receive/playback parity (AP1 and AP2) with robust device output.

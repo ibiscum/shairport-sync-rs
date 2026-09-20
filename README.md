@@ -91,6 +91,64 @@ output_format = "f32le"
 max_clients = 10
 ```
 
+## Manual Run and Debian Smoke Tests
+
+Manual run (no installation):
+
+```bash
+cargo run -- --backend null --name "SSR Debian Smoke" --port 5000
+```
+
+Smoke test scripts (run from repository root):
+
+```bash
+sh scripts/debian-smoke-test.sh
+```
+
+JSON variant for CI parsing:
+
+```bash
+sh scripts/debian-smoke-test-json.sh
+```
+
+The JSON script prints one JSON object to stdout with `status` set to `passed` or `failed` and includes check-level details and log artifact paths.
+
+Optional overrides:
+
+```bash
+PORT=5001 NAME="SSR CI Smoke" BACKEND=null ./scripts/debian-smoke-test.sh
+PORT=5001 NAME="SSR CI Smoke" BACKEND=null ./scripts/debian-smoke-test-json.sh
+```
+
+### Troubleshooting
+
+1. Running bash scripts via `sh`
+
+Symptom: errors like `[[: not found` or `Syntax error: Bad for loop variable`.
+
+Cause: Debian `sh` is typically `dash`, which does not support Bash-only syntax.
+
+Fix: run scripts with `bash` or execute them directly after `chmod +x`:
+
+```bash
+bash scripts/debian-smoke-test.sh
+bash scripts/debian-smoke-test-json.sh
+./scripts/debian-smoke-test.sh
+./scripts/debian-smoke-test-json.sh
+```
+
+2. mDNS port mismatch interpretation in Avahi output
+
+Symptom: the smoke script reports missing expected port even though the service name appears.
+
+Cause: `_raop._tcp` entries from multiple devices or previous local runs may coexist; the name alone does not prove the expected instance/port.
+
+Fix: rely on resolved (`=`) lines from parseable output and verify both service name and port together:
+
+```bash
+avahi-browse -prt _raop._tcp
+```
+
 ## License and Notices
 
 Conservative licensing policy for this repository:

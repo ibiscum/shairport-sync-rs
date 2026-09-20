@@ -211,6 +211,8 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn valid_base() -> AppConfig {
         AppConfig {
@@ -223,6 +225,19 @@ mod tests {
             password: None,
             max_clients: 1,
         }
+    }
+
+    fn unique_temp_file(prefix: &str) -> PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock moved backwards")
+            .as_nanos();
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("shairport-sync-rs-{prefix}-{pid}-{ts}.toml"))
+    }
+
+    fn parse_cli(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("CLI parsing should succeed")
     }
 
     #[test]
@@ -288,5 +303,199 @@ mod tests {
             .validate()
             .expect_err("alsa backend should require non-empty alsa_device");
         assert!(err.contains("alsa_device"));
+    }
+
+    #[test]
+    fn load_merges_file_and_cli_with_cli_precedence() {
+        let path = unique_temp_file("config-load-precedence");
+        let toml = r#"
+name = "From File"
+port = 6000
+backend = "pipe"
+output_format = "s24le"
+pipe_path = "/tmp/from-file.pcm"
+password = "file-pass"
+max_clients = 2
+"#;
+        fs::write(&path, toml).expect("failed to write temp config");
+
+        let cli = Cli {
+            config: Some(path.clone()),
+            name: Some("From CLI".to_string()),
+            port: Some(7000),
+            backend: None,
+            output_format: Some(OutputSampleFormat::S16Le),
+            alsa_device: None,
+            pipe_path: Some("/tmp/from-cli.pcm".to_string()),
+            password: Some("cli-pass".to_string()),
+            max_clients: Some(4),
+        };
+
+        let loaded = AppConfig::load(&cli).expect("config load should succeed");
+
+        assert_eq!(loaded.name, "From CLI");
+        assert_eq!(loaded.port, 7000);
+        assert!(matches!(loaded.backend, AudioBackend::Pipe));
+        assert_eq!(loaded.output_format, OutputSampleFormat::S16Le);
+        assert_eq!(loaded.pipe_path.as_deref(), Some("/tmp/from-cli.pcm"));
+        assert_eq!(loaded.password.as_deref(), Some("cli-pass"));
+        assert_eq!(loaded.max_clients, 4);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_rejects_missing_config_file() {
+        let cli = Cli {
+            config: Some(PathBuf::from("/definitely/not/present/shairport-sync-rs.toml")),
+            name: None,
+            port: None,
+            backend: None,
+            output_format: None,
+            alsa_device: None,
+            pipe_path: None,
+            password: None,
+            max_clients: None,
+        };
+
+        let err = AppConfig::load(&cli).expect_err("missing config file should fail");
+        assert!(err.contains("failed to read config file"));
+    }
+
+    #[test]
+    fn load_rejects_invalid_toml() {
+        let path = unique_temp_file("config-load-invalid");
+        fs::write(&path, "name = [").expect("failed to write invalid temp config");
+
+        let cli = Cli {
+            config: Some(path.clone()),
+            name: None,
+            port: None,
+            backend: None,
+            output_format: None,
+            alsa_device: None,
+            pipe_path: None,
+            password: None,
+            max_clients: None,
+        };
+
+        let err = AppConfig::load(&cli).expect_err("invalid config should fail");
+        assert!(err.contains("failed to parse config file"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn cli_parse_backend_selection_valid_cases_table_driven() {
+        struct ValidCase {
+            name: &'static str,
+            args: Vec<&'static str>,
+            expected_backend: AudioBackend,
+            expected_format: OutputSampleFormat,
+            expected_pipe_path: Option<&'static str>,
+        }
+
+        let cases = vec![
+            ValidCase {
+                name: "pipe with s24le and explicit path",
+                args: vec![
+                    "shairport-sync-rs",
+                    "--backend",
+                    "pipe",
+                    "--output-format",
+                    "s24le",
+                    "--pipe-path",
+                    "/tmp/cli-pipe.pcm",
+                ],
+                expected_backend: AudioBackend::Pipe,
+                expected_format: OutputSampleFormat::S24Le,
+                expected_pipe_path: Some("/tmp/cli-pipe.pcm"),
+            },
+            ValidCase {
+                name: "stdout with s16le",
+                args: vec![
+                    "shairport-sync-rs",
+                    "--backend",
+                    "stdout",
+                    "--output-format",
+                    "s16le",
+                ],
+                expected_backend: AudioBackend::Stdout,
+                expected_format: OutputSampleFormat::S16Le,
+                expected_pipe_path: None,
+            },
+        ];
+
+        for case in cases {
+            let cli = parse_cli(&case.args);
+            let loaded =
+                AppConfig::load(&cli).unwrap_or_else(|e| panic!("case '{}' failed: {e}", case.name));
+
+            assert!(
+                std::mem::discriminant(&loaded.backend)
+                    == std::mem::discriminant(&case.expected_backend),
+                "unexpected backend for case '{}'",
+                case.name
+            );
+            assert_eq!(
+                loaded.output_format, case.expected_format,
+                "unexpected output format for case '{}'",
+                case.name
+            );
+
+            if let Some(expected_path) = case.expected_pipe_path {
+                assert_eq!(
+                    loaded.pipe_path.as_deref(),
+                    Some(expected_path),
+                    "unexpected pipe path for case '{}'",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cli_parse_backend_selection_invalid_cases_table_driven() {
+        struct InvalidCase {
+            name: &'static str,
+            args: Vec<&'static str>,
+            expected_error_substring: &'static str,
+        }
+
+        let mut cases = vec![InvalidCase {
+            name: "pipe with blank path",
+            args: vec![
+                "shairport-sync-rs",
+                "--backend",
+                "pipe",
+                "--pipe-path",
+                "   ",
+            ],
+            expected_error_substring: "pipe_path",
+        }];
+
+        #[cfg(target_os = "linux")]
+        cases.push(InvalidCase {
+            name: "alsa with non-f32le output",
+            args: vec![
+                "shairport-sync-rs",
+                "--backend",
+                "alsa",
+                "--output-format",
+                "s16le",
+            ],
+            expected_error_substring: "output_format",
+        });
+
+        for case in cases {
+            let cli = parse_cli(&case.args);
+            let err = AppConfig::load(&cli)
+                .expect_err("invalid case should fail config validation");
+            assert!(
+                err.contains(case.expected_error_substring),
+                "unexpected error for case '{}': {err}",
+                case.name
+            );
+        }
     }
 }
