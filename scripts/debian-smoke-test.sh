@@ -17,8 +17,28 @@ LOG_FILE="${LOG_FILE:-/tmp/shairport-sync-rs-smoke.log}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-20}"
 MDNS_TIMEOUT_SECONDS="${MDNS_TIMEOUT_SECONDS:-10}"
 BUILD_FIRST="${BUILD_FIRST:-1}"
+AP1_EXPECT_CN="${AP1_EXPECT_CN:-}"
+AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
+AIRPLAY_MODE="${AIRPLAY_MODE:-}"
+AP1_CODECS="${AP1_CODECS:-}"
+AP1_ENCRYPTION="${AP1_ENCRYPTION:-}"
 
 APP_PID=""
+MDNS_MATCH_LINE=""
+
+extract_txt_value() {
+    local line="$1"
+    local key="$2"
+    awk -v key="$key" -F'"' '{
+        for (i = 2; i <= NF; i += 2) {
+            if (index($i, key "=") == 1) {
+                sub("^" key "=", "", $i)
+                print $i
+                exit
+            }
+        }
+    }' <<<"$line"
+}
 
 require_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -67,7 +87,17 @@ fi
 
 echo "Starting shairport-sync-rs on port ${PORT} with backend ${BACKEND}..."
 : >"${LOG_FILE}"
-RUST_LOG="${RUST_LOG:-info}" cargo run -- --backend "${BACKEND}" --name "${NAME}" --port "${PORT}" >"${LOG_FILE}" 2>&1 &
+run_args=(--backend "${BACKEND}" --name "${NAME}" --port "${PORT}")
+if [[ -n "${AIRPLAY_MODE}" ]]; then
+    run_args+=(--airplay-mode "${AIRPLAY_MODE}")
+fi
+if [[ -n "${AP1_CODECS}" ]]; then
+    run_args+=(--ap1-codecs "${AP1_CODECS}")
+fi
+if [[ -n "${AP1_ENCRYPTION}" ]]; then
+    run_args+=(--ap1-encryption "${AP1_ENCRYPTION}")
+fi
+RUST_LOG="${RUST_LOG:-info}" cargo run -- "${run_args[@]}" >"${LOG_FILE}" 2>&1 &
 APP_PID=$!
 
 port_ok=0
@@ -103,17 +133,33 @@ fi
 escaped_name="${NAME//\\/\\\\}"
 escaped_name="${escaped_name// /\\032}"
 
-if ! grep -Fq "\\064${escaped_name};" <<<"${BROWSE_OUTPUT}"; then
-    echo "Did not find service name '${NAME}' in Avahi output." >&2
-    exit 1
-fi
+MDNS_MATCH_LINE="$(grep '^=' <<<"${BROWSE_OUTPUT}" | grep -F "\\064${escaped_name};" | grep -E ";${PORT};" | head -n 1 || true)"
 
-if ! grep -Eq "^=;.*;${PORT};" <<<"${BROWSE_OUTPUT}"; then
-    echo "Did not find service port '${PORT}' in Avahi output." >&2
+if [[ -z "${MDNS_MATCH_LINE}" ]]; then
+    echo "Did not find resolved Avahi entry matching name '${NAME}' and port '${PORT}'." >&2
     exit 1
 fi
 
 echo "mDNS check passed: found '${NAME}' on port ${PORT}."
+
+if [[ -n "${AP1_EXPECT_CN}" ]]; then
+    actual_cn="$(extract_txt_value "${MDNS_MATCH_LINE}" "cn")"
+    if [[ "${actual_cn}" != "${AP1_EXPECT_CN}" ]]; then
+        echo "AP1 cn mismatch: expected '${AP1_EXPECT_CN}', got '${actual_cn:-<missing>}'" >&2
+        exit 1
+    fi
+    echo "AP1 cn check passed: ${actual_cn}"
+fi
+
+if [[ -n "${AP1_EXPECT_ET}" ]]; then
+    actual_et="$(extract_txt_value "${MDNS_MATCH_LINE}" "et")"
+    if [[ "${actual_et}" != "${AP1_EXPECT_ET}" ]]; then
+        echo "AP1 et mismatch: expected '${AP1_EXPECT_ET}', got '${actual_et:-<missing>}'" >&2
+        exit 1
+    fi
+    echo "AP1 et check passed: ${actual_et}"
+fi
+
 echo "Stopping server cleanly..."
 
 kill -INT "${APP_PID}" >/dev/null 2>&1 || true

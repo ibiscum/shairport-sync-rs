@@ -11,6 +11,12 @@ jobs:
   debian-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      AIRPLAY_MODE: ap1
+      AP1_CODECS: "pcm,alac"
+      AP1_ENCRYPTION: "none"
+      AP1_EXPECT_CN: "0,1"
+      AP1_EXPECT_ET: "0"
 
     steps:
       - name: Checkout
@@ -51,6 +57,12 @@ jobs:
     timeout-minutes: 15
     needs: debian-smoke
     if: ${{ failure() && needs.debian-smoke.result == 'failure' }}
+    env:
+      AIRPLAY_MODE: ap1
+      AP1_CODECS: "pcm,alac"
+      AP1_ENCRYPTION: "none"
+      AP1_EXPECT_CN: "0,1"
+      AP1_EXPECT_ET: "0"
 
     steps:
       - name: Checkout

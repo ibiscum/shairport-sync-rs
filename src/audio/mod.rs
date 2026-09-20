@@ -107,6 +107,13 @@ mod tests {
             pipe_path: Some("/tmp/shairport-sync-rs-test-null.pcm".to_string()),
             password: None,
             max_clients: 1,
+            raop_output_sample_rate: None,
+            raop_output_max_channels: None,
+            ap1_codecs: None,
+            ap1_encryption: None,
+            airplay_mode: crate::config::AirPlayModeConfig::Ap2,
+            ap2_pin: None,
+            ap2_pairing_store_path: None,
         };
 
         let handler = make_handler(&cfg);
@@ -126,6 +133,13 @@ mod tests {
             pipe_path: Some("/tmp/shairport-sync-rs-test-stdout.pcm".to_string()),
             password: None,
             max_clients: 1,
+            raop_output_sample_rate: None,
+            raop_output_max_channels: None,
+            ap1_codecs: None,
+            ap1_encryption: None,
+            airplay_mode: crate::config::AirPlayModeConfig::Ap2,
+            ap2_pin: None,
+            ap2_pairing_store_path: None,
         };
 
         let handler = make_handler(&cfg);
@@ -145,6 +159,13 @@ mod tests {
             pipe_path: Some("/tmp/shairport-sync-rs-test-pipe.pcm".to_string()),
             password: None,
             max_clients: 1,
+            raop_output_sample_rate: None,
+            raop_output_max_channels: None,
+            ap1_codecs: None,
+            ap1_encryption: None,
+            airplay_mode: crate::config::AirPlayModeConfig::Ap2,
+            ap2_pin: None,
+            ap2_pairing_store_path: None,
         };
 
         let handler = make_handler(&cfg);
@@ -182,6 +203,13 @@ mod tests {
             pipe_path: Some(path_str.clone()),
             password: None,
             max_clients: 1,
+            raop_output_sample_rate: None,
+            raop_output_max_channels: None,
+            ap1_codecs: None,
+            ap1_encryption: None,
+            airplay_mode: crate::config::AirPlayModeConfig::Ap2,
+            ap2_pin: None,
+            ap2_pairing_store_path: None,
         };
 
         let handler = make_handler(&cfg);

@@ -17,6 +17,11 @@ LOG_FILE="${LOG_FILE:-/tmp/shairport-sync-rs-smoke.log}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-20}"
 MDNS_TIMEOUT_SECONDS="${MDNS_TIMEOUT_SECONDS:-10}"
 BUILD_FIRST="${BUILD_FIRST:-1}"
+AP1_EXPECT_CN="${AP1_EXPECT_CN:-}"
+AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
+AIRPLAY_MODE="${AIRPLAY_MODE:-}"
+AP1_CODECS="${AP1_CODECS:-}"
+AP1_ENCRYPTION="${AP1_ENCRYPTION:-}"
 
 APP_PID=""
 STARTED="false"
@@ -24,9 +29,27 @@ PORT_OK="false"
 MDNS_OK="false"
 MDNS_NAME_OK="false"
 MDNS_PORT_OK="false"
+AP1_CN_OK="true"
+AP1_ET_OK="true"
 ERROR_STAGE=""
 ERROR_MESSAGE=""
 MDNS_MATCH_LINE=""
+AP1_ACTUAL_CN=""
+AP1_ACTUAL_ET=""
+
+extract_txt_value() {
+    local line="$1"
+    local key="$2"
+    awk -v key="$key" -F'"' '{
+        for (i = 2; i <= NF; i += 2) {
+            if (index($i, key "=") == 1) {
+                sub("^" key "=", "", $i)
+                print $i
+                exit
+            }
+        }
+    }' <<<"$line"
+}
 
 log() {
     echo "$*" >&2
@@ -63,17 +86,26 @@ emit_json() {
     printf '"port_listening":%s,' "$PORT_OK"
     printf '"mdns_seen":%s,' "$MDNS_OK"
     printf '"mdns_name_match":%s,' "$MDNS_NAME_OK"
-    printf '"mdns_port_match":%s' "$MDNS_PORT_OK"
+    printf '"mdns_port_match":%s,' "$MDNS_PORT_OK"
+    printf '"ap1_cn_match":%s,' "$AP1_CN_OK"
+    printf '"ap1_et_match":%s' "$AP1_ET_OK"
     printf '},'
     printf '"config":{'
     printf '"port":%s,' "$(json_escape "$PORT")"
     printf '"name":"%s",' "$(json_escape "$NAME")"
     printf '"backend":"%s",' "$(json_escape "$BACKEND")"
-    printf '"build_first":%s' "$( [[ "$BUILD_FIRST" == "1" ]] && echo true || echo false )"
+    printf '"airplay_mode":"%s",' "$(json_escape "$AIRPLAY_MODE")"
+    printf '"ap1_codecs":"%s",' "$(json_escape "$AP1_CODECS")"
+    printf '"ap1_encryption":"%s",' "$(json_escape "$AP1_ENCRYPTION")"
+    printf '"build_first":%s,' "$( [[ "$BUILD_FIRST" == "1" ]] && echo true || echo false )"
+    printf '"ap1_expect_cn":"%s",' "$(json_escape "$AP1_EXPECT_CN")"
+    printf '"ap1_expect_et":"%s"' "$(json_escape "$AP1_EXPECT_ET")"
     printf '},'
     printf '"artifacts":{'
     printf '"log_file":"%s",' "$(json_escape "$LOG_FILE")"
-    printf '"mdns_match_line":"%s"' "$(json_escape "$MDNS_MATCH_LINE")"
+    printf '"mdns_match_line":"%s",' "$(json_escape "$MDNS_MATCH_LINE")"
+    printf '"ap1_actual_cn":"%s",' "$(json_escape "$AP1_ACTUAL_CN")"
+    printf '"ap1_actual_et":"%s"' "$(json_escape "$AP1_ACTUAL_ET")"
     printf '},'
     printf '"error":{'
     printf '"stage":"%s",' "$(json_escape "$ERROR_STAGE")"
@@ -116,7 +148,17 @@ fi
 
 log "Starting shairport-sync-rs on port ${PORT} with backend ${BACKEND}..."
 : >"${LOG_FILE}"
-RUST_LOG="${RUST_LOG:-info}" cargo run -- --backend "${BACKEND}" --name "${NAME}" --port "${PORT}" >"${LOG_FILE}" 2>&1 &
+run_args=(--backend "${BACKEND}" --name "${NAME}" --port "${PORT}")
+if [[ -n "${AIRPLAY_MODE}" ]]; then
+    run_args+=(--airplay-mode "${AIRPLAY_MODE}")
+fi
+if [[ -n "${AP1_CODECS}" ]]; then
+    run_args+=(--ap1-codecs "${AP1_CODECS}")
+fi
+if [[ -n "${AP1_ENCRYPTION}" ]]; then
+    run_args+=(--ap1-encryption "${AP1_ENCRYPTION}")
+fi
+RUST_LOG="${RUST_LOG:-info}" cargo run -- "${run_args[@]}" >"${LOG_FILE}" 2>&1 &
 APP_PID=$!
 STARTED="true"
 
@@ -165,6 +207,11 @@ fi
 
 MDNS_MATCH_LINE="$(grep '^=' <<<"${BROWSE_OUTPUT}" | grep -F "\\064${escaped_name};" | grep -E ";${PORT};" | head -n 1 || true)"
 
+if [[ -n "${MDNS_MATCH_LINE}" ]]; then
+    MDNS_NAME_OK="true"
+    MDNS_PORT_OK="true"
+fi
+
 if [[ "$MDNS_NAME_OK" != "true" ]]; then
     ERROR_STAGE="mdns-assert"
     ERROR_MESSAGE="service name '${NAME}' not found in avahi-browse output"
@@ -175,6 +222,25 @@ fi
 if [[ "$MDNS_PORT_OK" != "true" ]]; then
     ERROR_STAGE="mdns-assert"
     ERROR_MESSAGE="service port '${PORT}' not found in avahi-browse output"
+    emit_json "failed"
+    exit 1
+fi
+
+AP1_ACTUAL_CN="$(extract_txt_value "${MDNS_MATCH_LINE}" "cn")"
+AP1_ACTUAL_ET="$(extract_txt_value "${MDNS_MATCH_LINE}" "et")"
+
+if [[ -n "${AP1_EXPECT_CN}" && "${AP1_ACTUAL_CN}" != "${AP1_EXPECT_CN}" ]]; then
+    AP1_CN_OK="false"
+    ERROR_STAGE="mdns-ap1-cn"
+    ERROR_MESSAGE="AP1 cn mismatch: expected '${AP1_EXPECT_CN}', got '${AP1_ACTUAL_CN:-<missing>}'"
+    emit_json "failed"
+    exit 1
+fi
+
+if [[ -n "${AP1_EXPECT_ET}" && "${AP1_ACTUAL_ET}" != "${AP1_EXPECT_ET}" ]]; then
+    AP1_ET_OK="false"
+    ERROR_STAGE="mdns-ap1-et"
+    ERROR_MESSAGE="AP1 et mismatch: expected '${AP1_EXPECT_ET}', got '${AP1_ACTUAL_ET:-<missing>}'"
     emit_json "failed"
     exit 1
 fi

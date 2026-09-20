@@ -42,6 +42,13 @@ Supported M0 config keys (TOML):
 - `pipe_path` (string, used by `pipe` backend; default `"/tmp/shairport-sync-rs.pcm"`)
 - `password` (string)
 - `max_clients` (integer)
+- `raop_output_sample_rate` (integer, optional; resamples decoded AirPlay audio before backend delivery)
+- `raop_output_max_channels` (integer, optional; downmixes decoded AirPlay audio to this maximum channel count)
+- `ap1_codecs` (array, optional; advertised AP1 codec list, values: `"pcm"`, `"alac"`)
+- `ap1_encryption` (array, optional; advertised AP1 encryption list, values: `"none"`, `"rsa"`, `"fairplay"`)
+- `airplay_mode` (`"ap1"` or `"ap2"`; default `"ap2"`)
+- `ap2_pin` (string, optional; requires `airplay_mode = "ap2"`)
+- `ap2_pairing_store_path` (string, optional; requires `airplay_mode = "ap2"`; persists AP2 pairings/identity)
 
 Linux ALSA CLI example:
 
@@ -59,6 +66,36 @@ Pipe backend with 16-bit output:
 
 ```bash
 cargo run -- --backend pipe --pipe-path /tmp/shairport-sync-rs.pcm --output-format s16le
+```
+
+RAOP protocol tuning example (AP1 advertisement + output shaping):
+
+```bash
+cargo run -- \
+	--backend null \
+	--airplay-mode ap1 \
+	--raop-output-sample-rate 48000 \
+	--raop-output-max-channels 2 \
+	--ap1-codecs pcm,alac \
+	--ap1-encryption none,rsa
+```
+
+AP2 pairing PIN example:
+
+```bash
+cargo run -- \
+	--backend null \
+	--airplay-mode ap2 \
+	--ap2-pin 12345678
+```
+
+AP2 pairing persistence example:
+
+```bash
+cargo run -- \
+	--backend null \
+	--airplay-mode ap2 \
+	--ap2-pairing-store-path /var/lib/shairport-sync-rs/ap2-pairings.toml
 ```
 
 Example:
@@ -118,6 +155,22 @@ Optional overrides:
 ```bash
 PORT=5001 NAME="SSR CI Smoke" BACKEND=null ./scripts/debian-smoke-test.sh
 PORT=5001 NAME="SSR CI Smoke" BACKEND=null ./scripts/debian-smoke-test-json.sh
+```
+
+Optional AP1 advertisement assertions (for protocol-compat checks):
+
+```bash
+AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test.sh
+AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test-json.sh
+```
+
+When set, `AP1_EXPECT_CN` and `AP1_EXPECT_ET` are matched against the resolved `_raop._tcp` TXT record (`cn=` and `et=`) for the exact service instance matching both configured name and port.
+
+To force AP1 mode during smoke tests, set launch overrides as well:
+
+```bash
+AIRPLAY_MODE=ap1 AP1_CODECS="pcm,alac" AP1_ENCRYPTION="none" \
+AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test.sh
 ```
 
 ### Troubleshooting
