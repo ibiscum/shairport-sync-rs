@@ -1,0 +1,19 @@
+[package]
+name = "shairport-sync-rs"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-3.0-or-later"
+description = "Rust-native shairport-sync application shell using shairplay backend"
+publish = false
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+shairplay = { path = "/opt/data/shairplay-rust" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = "0.10"

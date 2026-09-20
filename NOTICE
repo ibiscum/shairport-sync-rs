@@ -1,0 +1,30 @@
+shairport-sync-rs Notice File
+============================
+
+This repository is a Rust porting project related to:
+- shairport-sync (upstream C project)
+- shairplay-rust (Rust AirPlay backend library)
+
+License intent for this repository:
+- Unless otherwise stated in a file header, repository code is provided under LGPL-3.0-or-later.
+- Files copied or adapted from upstream projects retain their original per-file notices and licensing terms.
+- When multiple license obligations apply in a distribution, all applicable notices and conditions must be preserved.
+
+Upstream notice context:
+1. shairplay-rust
+   - Upstream project includes LGPL-3.0 licensing.
+   - This repository includes LGPL-3.0 text in the root LICENSE file.
+
+2. shairport-sync
+   - Upstream COPYING indicates that license terms are provided in individual source files.
+   - Imported or adapted material from shairport-sync should keep original copyright and permission headers.
+
+Contributor guidance:
+- Do not remove upstream file headers from imported/adapted files.
+- Add attribution in commit messages when logic is ported from upstream sources.
+- Prefer preserving provenance comments when practical.
+
+Canonical policy files:
+- LICENSE
+- NOTICE
+- Per-file headers (authoritative for file-specific exceptions)
