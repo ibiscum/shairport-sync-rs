@@ -17,4 +17,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 shairplay = { git = "https://github.com/ibiscum/shairplay-rust.git", branch = "main"} 
 
 [target.'cfg(target_os = "linux")'.dependencies]
-alsa = "0.10"
+alsa = "0.12"
