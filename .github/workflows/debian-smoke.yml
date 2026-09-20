@@ -51,6 +51,30 @@ jobs:
             exit 1
           fi
 
+      - name: Run AP2 smoke test and enforce pass status
+        shell: bash
+        env:
+          PORT: "5600"
+          AIRPLAY_MODE: ap2
+          AP1_CODECS: ""
+          AP1_ENCRYPTION: ""
+          AP1_EXPECT_CN: ""
+          AP1_EXPECT_ET: ""
+          AP2_PIN: "12345678"
+          AP2_PAIRING_STORE_PATH: /tmp/shairport-sync-rs-ap2-pairings.toml
+          AP2_EXPECT_FEATURES: "0x405D4A00,0x14340"
+          AP2_EXPECT_FLAGS: "0x204"
+        run: |
+          set -euo pipefail
+          json_output="$(./scripts/debian-smoke-test-json.sh)"
+          echo "$json_output"
+
+          status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["status"])' "$json_output")"
+          if [[ "$status" != "passed" ]]; then
+            echo "AP2 smoke test reported status=$status"
+            exit 1
+          fi
+
   smoke-debug-artifacts:
     name: Upload Smoke Debug Logs
     runs-on: ubuntu-latest
@@ -89,8 +113,10 @@ jobs:
         run: |
           set +e
           ./scripts/debian-smoke-test-json.sh >/tmp/shairport-sync-rs-smoke-result.json
+          PORT=5600 AIRPLAY_MODE=ap2 AP1_CODECS='' AP1_ENCRYPTION='' AP1_EXPECT_CN='' AP1_EXPECT_ET='' AP2_PIN='12345678' AP2_PAIRING_STORE_PATH='/tmp/shairport-sync-rs-ap2-pairings.toml' AP2_EXPECT_FEATURES='0x405D4A00,0x14340' AP2_EXPECT_FLAGS='0x204' ./scripts/debian-smoke-test-json.sh >/tmp/shairport-sync-rs-smoke-result-ap2.json
           echo "Diagnostic rerun result:"
           cat /tmp/shairport-sync-rs-smoke-result.json
+          cat /tmp/shairport-sync-rs-smoke-result-ap2.json
           exit 0
 
       - name: Upload smoke logs artifact
@@ -101,4 +127,6 @@ jobs:
           path: |
             /tmp/shairport-sync-rs-smoke.log
             /tmp/shairport-sync-rs-smoke-result.json
+            /tmp/shairport-sync-rs-smoke-result-ap2.json
+            /tmp/shairport-sync-rs-ap2-pairings.toml
           if-no-files-found: warn

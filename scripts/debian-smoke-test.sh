@@ -22,9 +22,14 @@ AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
 AIRPLAY_MODE="${AIRPLAY_MODE:-}"
 AP1_CODECS="${AP1_CODECS:-}"
 AP1_ENCRYPTION="${AP1_ENCRYPTION:-}"
+AP2_PIN="${AP2_PIN:-}"
+AP2_PAIRING_STORE_PATH="${AP2_PAIRING_STORE_PATH:-}"
+AP2_EXPECT_FEATURES="${AP2_EXPECT_FEATURES:-}"
+AP2_EXPECT_FLAGS="${AP2_EXPECT_FLAGS:-}"
 
 APP_PID=""
 MDNS_MATCH_LINE=""
+AIRPLAY_MATCH_LINE=""
 
 extract_txt_value() {
     local line="$1"
@@ -97,6 +102,12 @@ fi
 if [[ -n "${AP1_ENCRYPTION}" ]]; then
     run_args+=(--ap1-encryption "${AP1_ENCRYPTION}")
 fi
+if [[ -n "${AP2_PIN}" ]]; then
+    run_args+=(--ap2-pin "${AP2_PIN}")
+fi
+if [[ -n "${AP2_PAIRING_STORE_PATH}" ]]; then
+    run_args+=(--ap2-pairing-store-path "${AP2_PAIRING_STORE_PATH}")
+fi
 RUST_LOG="${RUST_LOG:-info}" cargo run -- "${run_args[@]}" >"${LOG_FILE}" 2>&1 &
 APP_PID=$!
 
@@ -158,6 +169,42 @@ if [[ -n "${AP1_EXPECT_ET}" ]]; then
         exit 1
     fi
     echo "AP1 et check passed: ${actual_et}"
+fi
+
+if [[ "${AIRPLAY_MODE}" == "ap2" || -n "${AP2_EXPECT_FEATURES}" || -n "${AP2_EXPECT_FLAGS}" ]]; then
+    echo "Browsing for _airplay._tcp service via Avahi..."
+    AIRPLAY_BROWSE_OUTPUT="$(timeout "${MDNS_TIMEOUT_SECONDS}" avahi-browse -prt _airplay._tcp 2>/dev/null || true)"
+    if [[ -z "${AIRPLAY_BROWSE_OUTPUT}" ]]; then
+        echo "No _airplay._tcp output captured in ${MDNS_TIMEOUT_SECONDS}s." >&2
+        exit 1
+    fi
+
+    airplay_escaped_name="${NAME//\\/\\\\}"
+    airplay_escaped_name="${airplay_escaped_name// /\\032}"
+    AIRPLAY_MATCH_LINE="$(grep '^=' <<<"${AIRPLAY_BROWSE_OUTPUT}" | grep -F ";${airplay_escaped_name};" | grep -E ";${PORT};" | head -n 1 || true)"
+
+    if [[ -z "${AIRPLAY_MATCH_LINE}" ]]; then
+        echo "Did not find resolved _airplay._tcp entry matching name '${NAME}' and port '${PORT}'." >&2
+        exit 1
+    fi
+
+    if [[ -n "${AP2_EXPECT_FEATURES}" ]]; then
+        actual_features="$(extract_txt_value "${AIRPLAY_MATCH_LINE}" "features")"
+        if [[ "${actual_features}" != "${AP2_EXPECT_FEATURES}" ]]; then
+            echo "AP2 features mismatch: expected '${AP2_EXPECT_FEATURES}', got '${actual_features:-<missing>}'" >&2
+            exit 1
+        fi
+        echo "AP2 features check passed: ${actual_features}"
+    fi
+
+    if [[ -n "${AP2_EXPECT_FLAGS}" ]]; then
+        actual_flags="$(extract_txt_value "${AIRPLAY_MATCH_LINE}" "flags")"
+        if [[ "${actual_flags}" != "${AP2_EXPECT_FLAGS}" ]]; then
+            echo "AP2 flags mismatch: expected '${AP2_EXPECT_FLAGS}', got '${actual_flags:-<missing>}'" >&2
+            exit 1
+        fi
+        echo "AP2 flags check passed: ${actual_flags}"
+    fi
 fi
 
 echo "Stopping server cleanly..."

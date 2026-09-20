@@ -22,6 +22,10 @@ AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
 AIRPLAY_MODE="${AIRPLAY_MODE:-}"
 AP1_CODECS="${AP1_CODECS:-}"
 AP1_ENCRYPTION="${AP1_ENCRYPTION:-}"
+AP2_PIN="${AP2_PIN:-}"
+AP2_PAIRING_STORE_PATH="${AP2_PAIRING_STORE_PATH:-}"
+AP2_EXPECT_FEATURES="${AP2_EXPECT_FEATURES:-}"
+AP2_EXPECT_FLAGS="${AP2_EXPECT_FLAGS:-}"
 
 APP_PID=""
 STARTED="false"
@@ -31,11 +35,17 @@ MDNS_NAME_OK="false"
 MDNS_PORT_OK="false"
 AP1_CN_OK="true"
 AP1_ET_OK="true"
+AP2_AIRPLAY_SERVICE_OK="true"
+AP2_FEATURES_OK="true"
+AP2_FLAGS_OK="true"
 ERROR_STAGE=""
 ERROR_MESSAGE=""
 MDNS_MATCH_LINE=""
+AIRPLAY_MATCH_LINE=""
 AP1_ACTUAL_CN=""
 AP1_ACTUAL_ET=""
+AP2_ACTUAL_FEATURES=""
+AP2_ACTUAL_FLAGS=""
 
 extract_txt_value() {
     local line="$1"
@@ -88,7 +98,10 @@ emit_json() {
     printf '"mdns_name_match":%s,' "$MDNS_NAME_OK"
     printf '"mdns_port_match":%s,' "$MDNS_PORT_OK"
     printf '"ap1_cn_match":%s,' "$AP1_CN_OK"
-    printf '"ap1_et_match":%s' "$AP1_ET_OK"
+    printf '"ap1_et_match":%s,' "$AP1_ET_OK"
+    printf '"ap2_airplay_service_match":%s,' "$AP2_AIRPLAY_SERVICE_OK"
+    printf '"ap2_features_match":%s,' "$AP2_FEATURES_OK"
+    printf '"ap2_flags_match":%s' "$AP2_FLAGS_OK"
     printf '},'
     printf '"config":{'
     printf '"port":%s,' "$(json_escape "$PORT")"
@@ -97,15 +110,22 @@ emit_json() {
     printf '"airplay_mode":"%s",' "$(json_escape "$AIRPLAY_MODE")"
     printf '"ap1_codecs":"%s",' "$(json_escape "$AP1_CODECS")"
     printf '"ap1_encryption":"%s",' "$(json_escape "$AP1_ENCRYPTION")"
+    printf '"ap2_pin":"%s",' "$(json_escape "$AP2_PIN")"
+    printf '"ap2_pairing_store_path":"%s",' "$(json_escape "$AP2_PAIRING_STORE_PATH")"
     printf '"build_first":%s,' "$( [[ "$BUILD_FIRST" == "1" ]] && echo true || echo false )"
     printf '"ap1_expect_cn":"%s",' "$(json_escape "$AP1_EXPECT_CN")"
-    printf '"ap1_expect_et":"%s"' "$(json_escape "$AP1_EXPECT_ET")"
+    printf '"ap1_expect_et":"%s",' "$(json_escape "$AP1_EXPECT_ET")"
+    printf '"ap2_expect_features":"%s",' "$(json_escape "$AP2_EXPECT_FEATURES")"
+    printf '"ap2_expect_flags":"%s"' "$(json_escape "$AP2_EXPECT_FLAGS")"
     printf '},'
     printf '"artifacts":{'
     printf '"log_file":"%s",' "$(json_escape "$LOG_FILE")"
     printf '"mdns_match_line":"%s",' "$(json_escape "$MDNS_MATCH_LINE")"
+    printf '"airplay_match_line":"%s",' "$(json_escape "$AIRPLAY_MATCH_LINE")"
     printf '"ap1_actual_cn":"%s",' "$(json_escape "$AP1_ACTUAL_CN")"
-    printf '"ap1_actual_et":"%s"' "$(json_escape "$AP1_ACTUAL_ET")"
+    printf '"ap1_actual_et":"%s",' "$(json_escape "$AP1_ACTUAL_ET")"
+    printf '"ap2_actual_features":"%s",' "$(json_escape "$AP2_ACTUAL_FEATURES")"
+    printf '"ap2_actual_flags":"%s"' "$(json_escape "$AP2_ACTUAL_FLAGS")"
     printf '},'
     printf '"error":{'
     printf '"stage":"%s",' "$(json_escape "$ERROR_STAGE")"
@@ -157,6 +177,12 @@ if [[ -n "${AP1_CODECS}" ]]; then
 fi
 if [[ -n "${AP1_ENCRYPTION}" ]]; then
     run_args+=(--ap1-encryption "${AP1_ENCRYPTION}")
+fi
+if [[ -n "${AP2_PIN}" ]]; then
+    run_args+=(--ap2-pin "${AP2_PIN}")
+fi
+if [[ -n "${AP2_PAIRING_STORE_PATH}" ]]; then
+    run_args+=(--ap2-pairing-store-path "${AP2_PAIRING_STORE_PATH}")
 fi
 RUST_LOG="${RUST_LOG:-info}" cargo run -- "${run_args[@]}" >"${LOG_FILE}" 2>&1 &
 APP_PID=$!
@@ -243,6 +269,48 @@ if [[ -n "${AP1_EXPECT_ET}" && "${AP1_ACTUAL_ET}" != "${AP1_EXPECT_ET}" ]]; then
     ERROR_MESSAGE="AP1 et mismatch: expected '${AP1_EXPECT_ET}', got '${AP1_ACTUAL_ET:-<missing>}'"
     emit_json "failed"
     exit 1
+fi
+
+if [[ "${AIRPLAY_MODE}" == "ap2" || -n "${AP2_EXPECT_FEATURES}" || -n "${AP2_EXPECT_FLAGS}" ]]; then
+    AIRPLAY_BROWSE_OUTPUT="$(timeout "${MDNS_TIMEOUT_SECONDS}" avahi-browse -prt _airplay._tcp 2>/dev/null || true)"
+    if [[ -z "${AIRPLAY_BROWSE_OUTPUT}" ]]; then
+        AP2_AIRPLAY_SERVICE_OK="false"
+        ERROR_STAGE="mdns-airplay-browse"
+        ERROR_MESSAGE="no _airplay._tcp output in ${MDNS_TIMEOUT_SECONDS}s"
+        emit_json "failed"
+        exit 1
+    fi
+
+    airplay_escaped_name="${NAME//\\/\\\\}"
+    airplay_escaped_name="${airplay_escaped_name// /\\032}"
+    AIRPLAY_MATCH_LINE="$(grep '^=' <<<"${AIRPLAY_BROWSE_OUTPUT}" | grep -F ";${airplay_escaped_name};" | grep -E ";${PORT};" | head -n 1 || true)"
+
+    if [[ -z "${AIRPLAY_MATCH_LINE}" ]]; then
+        AP2_AIRPLAY_SERVICE_OK="false"
+        ERROR_STAGE="mdns-airplay-assert"
+        ERROR_MESSAGE="matching _airplay._tcp entry for name '${NAME}' and port '${PORT}' not found"
+        emit_json "failed"
+        exit 1
+    fi
+
+    AP2_ACTUAL_FEATURES="$(extract_txt_value "${AIRPLAY_MATCH_LINE}" "features")"
+    AP2_ACTUAL_FLAGS="$(extract_txt_value "${AIRPLAY_MATCH_LINE}" "flags")"
+
+    if [[ -n "${AP2_EXPECT_FEATURES}" && "${AP2_ACTUAL_FEATURES}" != "${AP2_EXPECT_FEATURES}" ]]; then
+        AP2_FEATURES_OK="false"
+        ERROR_STAGE="mdns-ap2-features"
+        ERROR_MESSAGE="AP2 features mismatch: expected '${AP2_EXPECT_FEATURES}', got '${AP2_ACTUAL_FEATURES:-<missing>}'"
+        emit_json "failed"
+        exit 1
+    fi
+
+    if [[ -n "${AP2_EXPECT_FLAGS}" && "${AP2_ACTUAL_FLAGS}" != "${AP2_EXPECT_FLAGS}" ]]; then
+        AP2_FLAGS_OK="false"
+        ERROR_STAGE="mdns-ap2-flags"
+        ERROR_MESSAGE="AP2 flags mismatch: expected '${AP2_EXPECT_FLAGS}', got '${AP2_ACTUAL_FLAGS:-<missing>}'"
+        emit_json "failed"
+        exit 1
+    fi
 fi
 
 cleanup

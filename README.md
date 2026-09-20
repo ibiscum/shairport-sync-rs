@@ -173,6 +173,16 @@ AIRPLAY_MODE=ap1 AP1_CODECS="pcm,alac" AP1_ENCRYPTION="none" \
 AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test.sh
 ```
 
+AP2 protocol-compat assertion example:
+
+```bash
+AIRPLAY_MODE=ap2 AP2_PIN="12345678" AP2_PAIRING_STORE_PATH="/tmp/ap2-pairings.toml" \
+AP2_EXPECT_FEATURES="0x405D4A00,0x14340" AP2_EXPECT_FLAGS="0x204" \
+./scripts/debian-smoke-test-json.sh
+```
+
+When AP2 checks are enabled, the scripts verify a matching resolved `_airplay._tcp` TXT record for the same service name and port, then validate `features=` and `flags=` values.
+
 ### Troubleshooting
 
 1. Running bash scripts via `sh`
