@@ -207,3 +207,86 @@ impl AppConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_base() -> AppConfig {
+        AppConfig {
+            name: "test".to_string(),
+            port: 5000,
+            backend: AudioBackend::Null,
+            output_format: OutputSampleFormat::F32Le,
+            alsa_device: Some("default".to_string()),
+            pipe_path: Some("/tmp/shairport-sync-rs-test.pcm".to_string()),
+            password: None,
+            max_clients: 1,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_pipe_with_s24le() {
+        let mut cfg = valid_base();
+        cfg.backend = AudioBackend::Pipe;
+        cfg.output_format = OutputSampleFormat::S24Le;
+
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_pipe_with_empty_pipe_path() {
+        let mut cfg = valid_base();
+        cfg.backend = AudioBackend::Pipe;
+        cfg.pipe_path = Some("   ".to_string());
+
+        let err = cfg.validate().expect_err("pipe backend should require non-empty pipe_path");
+        assert!(err.contains("pipe_path"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_name() {
+        let mut cfg = valid_base();
+        cfg.name = "".to_string();
+
+        let err = cfg.validate().expect_err("empty name should fail validation");
+        assert!(err.contains("name"));
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_clients() {
+        let mut cfg = valid_base();
+        cfg.max_clients = 0;
+
+        let err = cfg
+            .validate()
+            .expect_err("max_clients=0 should fail validation");
+        assert!(err.contains("max_clients"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn validate_rejects_alsa_with_non_f32le_output() {
+        let mut cfg = valid_base();
+        cfg.backend = AudioBackend::Alsa;
+        cfg.output_format = OutputSampleFormat::S16Le;
+
+        let err = cfg
+            .validate()
+            .expect_err("alsa backend should reject non-f32le output format");
+        assert!(err.contains("output_format"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn validate_rejects_alsa_with_empty_device() {
+        let mut cfg = valid_base();
+        cfg.backend = AudioBackend::Alsa;
+        cfg.alsa_device = Some("   ".to_string());
+
+        let err = cfg
+            .validate()
+            .expect_err("alsa backend should require non-empty alsa_device");
+        assert!(err.contains("alsa_device"));
+    }
+}

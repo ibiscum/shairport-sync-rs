@@ -1,0 +1,25 @@
+# Ignore build artifacts and temporary files
+target/
+**/*.rs.bk
+*.pdb
+
+# Coverage
+lcov.info
+coverage/
+*.profraw
+
+# Local environment and runtime state
+.env
+.env.*
+!.env.example
+*.log
+persistence.json
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
