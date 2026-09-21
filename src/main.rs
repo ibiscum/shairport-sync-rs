@@ -4,12 +4,13 @@ mod runtime;
 
 use clap::Parser;
 use config::{AirPlayModeConfig, Ap1CodecConfig, Ap1EncryptionConfig, AppConfig, Cli};
-use shairplay::{AirPlayMode, Ap1Codec, Ap1Encryption, RaopServer, RaopServerBuilder};
+use shairplay::{AirPlayMode, Ap1Codec, Ap1Encryption, BindConfig, RaopServer, RaopServerBuilder};
 use std::sync::Arc;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::runtime::pairing_store::FilePairingStore;
+use crate::runtime::singleton::InstanceLock;
 
 #[tokio::main]
 async fn main() {
@@ -25,11 +26,14 @@ async fn run() -> Result<(), String> {
     let cli = Cli::parse();
     let cfg = AppConfig::load(&cli)?;
 
+    let _instance_lock = InstanceLock::acquire(&cfg.name, cfg.port)?;
+
     let handler = audio::make_handler(&cfg);
+    let bind = BindConfig::new().port(cfg.port).exact_port();
 
     let mut builder = RaopServer::builder()
         .name(cfg.name.clone())
-        .port(cfg.port)
+        .bind(bind)
         .max_clients(cfg.max_clients);
 
     builder = apply_raop_protocol_config(builder, &cfg)?;

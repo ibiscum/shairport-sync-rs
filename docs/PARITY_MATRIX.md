@@ -24,6 +24,10 @@ Implement in shairport-sync-rs:
 
 ## Parity Matrix (Subsystem Level)
 
+Milestone status note:
+- M0 (Bootstrap and Skeleton): FULFILLED.
+- M1.1 (PipeWire Pipeline and Backend Behavior Compliance): PLANNED.
+
 | Subsystem | shairport-sync (C) reference | shairplay-rust capability | shairport-sync-rs work required | Status |
 |---|---|---|---|---|
 | Main runtime and process lifecycle | shairport.c | RaopServer lifecycle exists; library-first | Executable startup/shutdown and Ctrl+C path are wired; daemon mode/service supervision still pending | IN PROGRESS |
@@ -45,6 +49,7 @@ Implement in shairport-sync-rs:
 | Daemon/service operation | libdaemon/systemd helpers | Not in crate | Implement foreground/background policy and systemd-friendly behavior | TODO |
 | Build/package outputs | autotools packaging scripts | Rust crate packaging exists only for backend | Add distro packaging, service files, config install layout | TODO |
 | Test strategy | tests/ and integration practices in C project | Strong crate test coverage exists | App-level unit/regression tests are in place; Debian smoke scripts and CI workflow added, including AP1 `cn`/`et` and AP2 `_airplay._tcp` features/flags protocol-compat assertions; sender-matrix E2E still pending | IN PROGRESS |
+| Milestone M1.1 tracking (PipeWire + backend compliance) | audio_alsa.c, audio_pw.c, audio_stdout.c, audio_pipe.c behavior baseline | Backend crate supplies protocol/audio stream processing; app owns output backend behavior | Implement PipeWire playback pipeline and enforce one conformance contract across ALSA/PipeWire/Pipe/Stdout/Null for lifecycle, recovery, and shutdown semantics aligned with upstream | PLANNED |
 
 ## Functional Priority for Parity
 1. Audio receive/playback parity (AP1 and AP2) with robust device output.

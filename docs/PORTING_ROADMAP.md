@@ -32,6 +32,13 @@ Acceptance:
 - Receiver appears in AirPlay discovery.
 - Basic AP1 playback to a dummy or stdout backend works end-to-end.
 
+Status: FULFILLED
+
+Evidence:
+- Runtime startup/shutdown and Ctrl+C flow are implemented (`src/main.rs`, `src/runtime/mod.rs`).
+- Discovery is covered by Debian smoke tests and CI mDNS assertions (`scripts/debian-smoke-test*.sh`, `.github/workflows/debian-smoke.yml`).
+- Basic AP1 path to dummy/stdout backends is covered by app-level tests (`src/audio/mod.rs`) and AP1 advertisement/protocol checks in smoke/CI.
+
 ### M1 - Audio Core Parity
 Deliverables:
 - Audio backend abstraction and at least ALSA + Pipe/Stdout implementations.
@@ -41,6 +48,19 @@ Deliverables:
 Acceptance:
 - Stable long-play sessions on AP1.
 - Gapless transition and reconnect behavior validated for common sender actions.
+
+### M1.1 - PipeWire Pipeline and Backend Behavior Compliance
+Deliverables:
+- Native PipeWire audio backend with a production-ready playback pipeline (stream creation, format setup, buffering, start/stop, recovery).
+- Backend capability mapping layer so backend-specific constraints are translated into effective runtime behavior consistent with upstream shairport-sync.
+- Conformance test suite for all implemented backends (ALSA, PipeWire, Pipe, Stdout, Null) covering lifecycle, underrun/recovery, reconnect, and shutdown semantics.
+- Operator-facing compatibility notes that document any unavoidable differences from upstream behavior.
+
+Acceptance:
+- PipeWire backend passes long-play and reconnect smoke/regression scenarios equivalent to ALSA validation depth.
+- Every implemented backend satisfies the same backend conformance contract and matches upstream shairport-sync behavior for start, write, pause/resume (where supported), stop, and error handling.
+- Port/listener release and service advertisement teardown behavior remain deterministic during shutdown across backend switches.
+- Any remaining backend-specific deltas vs upstream are explicitly documented and justified.
 
 ### M2 - AP2 Operational Parity
 Deliverables:

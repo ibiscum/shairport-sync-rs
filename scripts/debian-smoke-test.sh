@@ -17,6 +17,7 @@ LOG_FILE="${LOG_FILE:-/tmp/shairport-sync-rs-smoke.log}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-20}"
 MDNS_TIMEOUT_SECONDS="${MDNS_TIMEOUT_SECONDS:-10}"
 BUILD_FIRST="${BUILD_FIRST:-1}"
+SHUTDOWN_TIMEOUT_SECONDS="${SHUTDOWN_TIMEOUT_SECONDS:-3}"
 AP1_EXPECT_CN="${AP1_EXPECT_CN:-}"
 AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
 AIRPLAY_MODE="${AIRPLAY_MODE:-}"
@@ -212,5 +213,22 @@ echo "Stopping server cleanly..."
 kill -INT "${APP_PID}" >/dev/null 2>&1 || true
 wait "${APP_PID}" >/dev/null 2>&1 || true
 APP_PID=""
+
+released=0
+for ((i = 0; i < SHUTDOWN_TIMEOUT_SECONDS * 10; i++)); do
+    if ! ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${PORT}$"; then
+        released=1
+        break
+    fi
+    sleep 0.1
+done
+
+if [[ ${released} -ne 1 ]]; then
+    echo "Port ${PORT} is still listening ${SHUTDOWN_TIMEOUT_SECONDS}s after shutdown." >&2
+    ss -ltnp | grep ":${PORT}" || true
+    exit 1
+fi
+
+echo "Port release check passed: TCP ${PORT} is no longer listening."
 
 echo "Smoke test passed."

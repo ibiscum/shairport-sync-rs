@@ -17,6 +17,7 @@ LOG_FILE="${LOG_FILE:-/tmp/shairport-sync-rs-smoke.log}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-20}"
 MDNS_TIMEOUT_SECONDS="${MDNS_TIMEOUT_SECONDS:-10}"
 BUILD_FIRST="${BUILD_FIRST:-1}"
+SHUTDOWN_TIMEOUT_SECONDS="${SHUTDOWN_TIMEOUT_SECONDS:-3}"
 AP1_EXPECT_CN="${AP1_EXPECT_CN:-}"
 AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
 AIRPLAY_MODE="${AIRPLAY_MODE:-}"
@@ -30,6 +31,7 @@ AP2_EXPECT_FLAGS="${AP2_EXPECT_FLAGS:-}"
 APP_PID=""
 STARTED="false"
 PORT_OK="false"
+PORT_RELEASED="false"
 MDNS_OK="false"
 MDNS_NAME_OK="false"
 MDNS_PORT_OK="false"
@@ -94,6 +96,7 @@ emit_json() {
     printf '"checks":{'
     printf '"started":%s,' "$STARTED"
     printf '"port_listening":%s,' "$PORT_OK"
+    printf '"port_released":%s,' "$PORT_RELEASED"
     printf '"mdns_seen":%s,' "$MDNS_OK"
     printf '"mdns_name_match":%s,' "$MDNS_NAME_OK"
     printf '"mdns_port_match":%s,' "$MDNS_PORT_OK"
@@ -315,4 +318,20 @@ fi
 
 cleanup
 APP_PID=""
+
+for ((i = 0; i < SHUTDOWN_TIMEOUT_SECONDS * 10; i++)); do
+    if ! ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${PORT}$"; then
+        PORT_RELEASED="true"
+        break
+    fi
+    sleep 0.1
+done
+
+if [[ "${PORT_RELEASED}" != "true" ]]; then
+    ERROR_STAGE="port-release"
+    ERROR_MESSAGE="port ${PORT} still listening ${SHUTDOWN_TIMEOUT_SECONDS}s after shutdown"
+    emit_json "failed"
+    exit 1
+fi
+
 emit_json "passed"

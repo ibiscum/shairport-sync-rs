@@ -1,4 +1,5 @@
 pub mod pairing_store;
+pub mod singleton;
 
 use shairplay::RaopServer;
 use tracing::info;
