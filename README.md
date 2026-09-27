@@ -49,6 +49,9 @@ Supported M0 config keys (TOML):
 - `airplay_mode` (`"ap1"` or `"ap2"`; default `"ap2"`)
 - `ap2_pin` (string, optional; requires `airplay_mode = "ap2"`)
 - `ap2_pairing_store_path` (string, optional; requires `airplay_mode = "ap2"`; persists AP2 pairings/identity)
+- `activity_interval_secs` (integer; periodic activity snapshot interval in seconds, default `30`)
+- `activity_snapshot_path` (string, optional; JSONL file for machine-readable activity snapshots)
+- `log_format` (`"text"` or `"json"`; default `"text"`)
 
 Linux ALSA CLI example:
 
@@ -171,6 +174,42 @@ To force AP1 mode during smoke tests, set launch overrides as well:
 ```bash
 AIRPLAY_MODE=ap1 AP1_CODECS="pcm,alac" AP1_ENCRYPTION="none" \
 AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test.sh
+```
+
+## Observability and Activity Monitor
+
+The runtime now emits periodic activity snapshots covering the currently implemented
+playback path and backends (null/stdout/pipe/alsa):
+
+- session lifecycle counters
+- connected client count
+- audio callback/sample counters
+- backend write/error/recovery counters
+- ALSA underrun, buffer-depth, and latency counters
+- metadata update counters
+
+Activity monitor controls (CLI/TOML):
+
+- `activity_interval_secs` (default `30`): snapshot interval
+- `activity_snapshot_path` (optional): JSONL output path for activity snapshots
+
+Logging controls (CLI/TOML):
+
+- `RUST_LOG`: level/target filtering (default `info,shairplay=info`)
+- `log_format`: `text` (default) or `json`
+
+Environment overrides (optional, highest priority):
+
+- `SSR_LOG_FORMAT`
+- `SSR_ACTIVITY_INTERVAL_SECS`
+- `SSR_ACTIVITY_SNAPSHOT_PATH`
+
+Examples:
+
+```bash
+cargo run -- --backend null --log-format json
+cargo run -- --backend alsa --activity-interval-secs 10 --activity-snapshot-path /tmp/ssr-activity.jsonl
+SSR_LOG_FORMAT=json RUST_LOG=info,shairplay=debug cargo run -- --backend null
 ```
 
 ### Troubleshooting

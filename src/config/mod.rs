@@ -4,7 +4,11 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
-#[command(name = "shairport-sync-rs", version, about = "Rust-native AirPlay audio receiver")]
+#[command(
+    name = "shairport-sync-rs",
+    version,
+    about = "Rust-native AirPlay audio receiver"
+)]
 pub struct Cli {
     #[arg(long, value_name = "FILE", help = "Path to TOML config file")]
     pub config: Option<PathBuf>,
@@ -18,10 +22,17 @@ pub struct Cli {
     #[arg(long, value_enum, help = "Audio sink backend")]
     pub backend: Option<AudioBackend>,
 
-    #[arg(long, value_enum, help = "Output sample format for pipe/stdout backends")]
+    #[arg(
+        long,
+        value_enum,
+        help = "Output sample format for pipe/stdout backends"
+    )]
     pub output_format: Option<OutputSampleFormat>,
 
-    #[arg(long, help = "ALSA playback device name (Linux only), e.g. default or hw:0,0")]
+    #[arg(
+        long,
+        help = "ALSA playback device name (Linux only), e.g. default or hw:0,0"
+    )]
     pub alsa_device: Option<String>,
 
     #[arg(long, help = "Output file/path for pipe backend (raw f32le stream)")]
@@ -33,7 +44,10 @@ pub struct Cli {
     #[arg(long, help = "Maximum concurrent clients")]
     pub max_clients: Option<usize>,
 
-    #[arg(long, help = "Resample AirPlay output to this rate before backend delivery")]
+    #[arg(
+        long,
+        help = "Resample AirPlay output to this rate before backend delivery"
+    )]
     pub raop_output_sample_rate: Option<u32>,
 
     #[arg(long, help = "Downmix AirPlay output to this maximum channel count")]
@@ -63,6 +77,15 @@ pub struct Cli {
 
     #[arg(long, help = "Path to AP2 pairing persistence file")]
     pub ap2_pairing_store_path: Option<String>,
+
+    #[arg(long, help = "Activity snapshot interval in seconds")]
+    pub activity_interval_secs: Option<u64>,
+
+    #[arg(long, help = "Path to JSONL activity snapshot output file")]
+    pub activity_snapshot_path: Option<String>,
+
+    #[arg(long, value_enum, help = "Runtime log output format")]
+    pub log_format: Option<LogFormat>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize)]
@@ -113,6 +136,13 @@ pub enum AirPlayModeConfig {
     Ap2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    Text,
+    Json,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub name: String,
@@ -130,6 +160,9 @@ pub struct AppConfig {
     pub airplay_mode: AirPlayModeConfig,
     pub ap2_pin: Option<String>,
     pub ap2_pairing_store_path: Option<String>,
+    pub activity_interval_secs: u64,
+    pub activity_snapshot_path: Option<String>,
+    pub log_format: LogFormat,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -149,6 +182,9 @@ struct FileConfig {
     airplay_mode: Option<AirPlayModeConfig>,
     ap2_pin: Option<String>,
     ap2_pairing_store_path: Option<String>,
+    activity_interval_secs: Option<u64>,
+    activity_snapshot_path: Option<String>,
+    log_format: Option<LogFormat>,
 }
 
 impl Default for AppConfig {
@@ -169,6 +205,9 @@ impl Default for AppConfig {
             airplay_mode: AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            activity_interval_secs: 30,
+            activity_snapshot_path: None,
+            log_format: LogFormat::Text,
         }
     }
 }
@@ -236,6 +275,15 @@ impl AppConfig {
         if let Some(v) = file.ap2_pairing_store_path {
             self.ap2_pairing_store_path = Some(v);
         }
+        if let Some(v) = file.activity_interval_secs {
+            self.activity_interval_secs = v;
+        }
+        if let Some(v) = file.activity_snapshot_path {
+            self.activity_snapshot_path = Some(v);
+        }
+        if let Some(v) = file.log_format {
+            self.log_format = v;
+        }
     }
 
     fn apply_cli(&mut self, cli: &Cli) {
@@ -284,6 +332,15 @@ impl AppConfig {
         if let Some(v) = &cli.ap2_pairing_store_path {
             self.ap2_pairing_store_path = Some(v.clone());
         }
+        if let Some(v) = cli.activity_interval_secs {
+            self.activity_interval_secs = v;
+        }
+        if let Some(v) = &cli.activity_snapshot_path {
+            self.activity_snapshot_path = Some(v.clone());
+        }
+        if let Some(v) = cli.log_format {
+            self.log_format = v;
+        }
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -295,6 +352,9 @@ impl AppConfig {
         }
         if self.max_clients == 0 {
             return Err("max_clients must be greater than 0".to_string());
+        }
+        if self.activity_interval_secs == 0 {
+            return Err("activity_interval_secs must be greater than 0".to_string());
         }
         if matches!(self.raop_output_sample_rate, Some(0)) {
             return Err("raop_output_sample_rate must be greater than 0".to_string());
@@ -347,9 +407,7 @@ impl AppConfig {
             if matches!(self.backend, AudioBackend::Alsa)
                 && self.output_format != OutputSampleFormat::F32Le
             {
-                return Err(
-                    "backend alsa currently supports only output_format=f32le".to_string(),
-                );
+                return Err("backend alsa currently supports only output_format=f32le".to_string());
             }
         }
         if matches!(self.backend, AudioBackend::Pipe)
@@ -359,6 +417,13 @@ impl AppConfig {
                 .is_none_or(|v| v.trim().is_empty())
         {
             return Err("pipe_path must not be empty when backend is pipe".to_string());
+        }
+        if self
+            .activity_snapshot_path
+            .as_deref()
+            .is_some_and(|v| v.trim().is_empty())
+        {
+            return Err("activity_snapshot_path must not be empty when set".to_string());
         }
         Ok(())
     }
@@ -387,6 +452,9 @@ mod tests {
             airplay_mode: AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            activity_interval_secs: 30,
+            activity_snapshot_path: None,
+            log_format: LogFormat::Text,
         }
     }
 
@@ -418,7 +486,9 @@ mod tests {
         cfg.backend = AudioBackend::Pipe;
         cfg.pipe_path = Some("   ".to_string());
 
-        let err = cfg.validate().expect_err("pipe backend should require non-empty pipe_path");
+        let err = cfg
+            .validate()
+            .expect_err("pipe backend should require non-empty pipe_path");
         assert!(err.contains("pipe_path"));
     }
 
@@ -427,7 +497,9 @@ mod tests {
         let mut cfg = valid_base();
         cfg.name = "".to_string();
 
-        let err = cfg.validate().expect_err("empty name should fail validation");
+        let err = cfg
+            .validate()
+            .expect_err("empty name should fail validation");
         assert!(err.contains("name"));
     }
 
@@ -493,9 +565,7 @@ mod tests {
         cfg.airplay_mode = AirPlayModeConfig::Ap1;
         cfg.ap2_pin = Some("12345678".to_string());
 
-        let err = cfg
-            .validate()
-            .expect_err("ap2_pin should require ap2 mode");
+        let err = cfg.validate().expect_err("ap2_pin should require ap2 mode");
         assert!(err.contains("airplay_mode=ap2"));
     }
 
@@ -584,6 +654,9 @@ airplay_mode = "ap1"
             airplay_mode: Some(AirPlayModeConfig::Ap1),
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            activity_interval_secs: Some(12),
+            activity_snapshot_path: Some("/tmp/activity-cli.jsonl".to_string()),
+            log_format: Some(LogFormat::Json),
         };
 
         let loaded = AppConfig::load(&cli).expect("config load should succeed");
@@ -602,6 +675,12 @@ airplay_mode = "ap1"
         assert_eq!(loaded.airplay_mode, AirPlayModeConfig::Ap1);
         assert!(loaded.ap2_pin.is_none());
         assert!(loaded.ap2_pairing_store_path.is_none());
+        assert_eq!(loaded.activity_interval_secs, 12);
+        assert_eq!(
+            loaded.activity_snapshot_path.as_deref(),
+            Some("/tmp/activity-cli.jsonl")
+        );
+        assert_eq!(loaded.log_format, LogFormat::Json);
 
         let _ = fs::remove_file(path);
     }
@@ -609,7 +688,9 @@ airplay_mode = "ap1"
     #[test]
     fn load_rejects_missing_config_file() {
         let cli = Cli {
-            config: Some(PathBuf::from("/definitely/not/present/shairport-sync-rs.toml")),
+            config: Some(PathBuf::from(
+                "/definitely/not/present/shairport-sync-rs.toml",
+            )),
             name: None,
             port: None,
             backend: None,
@@ -625,6 +706,9 @@ airplay_mode = "ap1"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            activity_interval_secs: None,
+            activity_snapshot_path: None,
+            log_format: None,
         };
 
         let err = AppConfig::load(&cli).expect_err("missing config file should fail");
@@ -653,6 +737,9 @@ airplay_mode = "ap1"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            activity_interval_secs: None,
+            activity_snapshot_path: None,
+            log_format: None,
         };
 
         let err = AppConfig::load(&cli).expect_err("invalid config should fail");
@@ -704,8 +791,8 @@ airplay_mode = "ap1"
 
         for case in cases {
             let cli = parse_cli(&case.args);
-            let loaded =
-                AppConfig::load(&cli).unwrap_or_else(|e| panic!("case '{}' failed: {e}", case.name));
+            let loaded = AppConfig::load(&cli)
+                .unwrap_or_else(|e| panic!("case '{}' failed: {e}", case.name));
 
             assert!(
                 std::mem::discriminant(&loaded.backend)
@@ -765,8 +852,8 @@ airplay_mode = "ap1"
 
         for case in cases {
             let cli = parse_cli(&case.args);
-            let err = AppConfig::load(&cli)
-                .expect_err("invalid case should fail config validation");
+            let err =
+                AppConfig::load(&cli).expect_err("invalid case should fail config validation");
             assert!(
                 err.contains(case.expected_error_substring),
                 "unexpected error for case '{}': {err}",

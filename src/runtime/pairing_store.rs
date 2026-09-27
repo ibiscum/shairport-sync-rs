@@ -22,7 +22,10 @@ impl FilePairingStore {
         let path = path.into();
         let state = if path.exists() {
             let content = fs::read_to_string(&path).map_err(|e| {
-                format!("failed to read AP2 pairing store file {}: {e}", path.display())
+                format!(
+                    "failed to read AP2 pairing store file {}: {e}",
+                    path.display()
+                )
             })?;
             toml::from_str::<PairingFileState>(&content).map_err(|e| {
                 format!(
@@ -142,8 +145,12 @@ impl PairingStore for FilePairingStore {
 
 fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create AP2 pairing store directory {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "failed to create AP2 pairing store directory {}: {e}",
+                parent.display()
+            )
+        })?;
     }
     Ok(())
 }

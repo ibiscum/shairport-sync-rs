@@ -1,30 +1,33 @@
-use std::io::Write;
 use crate::config::OutputSampleFormat;
+use std::io::{self, Write};
 
-pub fn write_samples<W: Write>(writer: &mut W, samples: &[f32], output_format: OutputSampleFormat) {
+pub fn write_samples<W: Write>(
+    writer: &mut W,
+    samples: &[f32],
+    output_format: OutputSampleFormat,
+) -> io::Result<()> {
     match output_format {
         OutputSampleFormat::F32Le => {
             for sample in samples {
-                let _ = writer.write_all(&sample.to_le_bytes());
+                writer.write_all(&sample.to_le_bytes())?;
             }
         }
         OutputSampleFormat::S16Le => {
             for sample in samples {
                 let scaled = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16;
-                let _ = writer.write_all(&scaled.to_le_bytes());
+                writer.write_all(&scaled.to_le_bytes())?;
             }
         }
         OutputSampleFormat::S24Le => {
             for sample in samples {
-                let scaled =
-                    (sample.clamp(-1.0, 1.0) * 8_388_607.0).round() as i32;
+                let scaled = (sample.clamp(-1.0, 1.0) * 8_388_607.0).round() as i32;
                 let bytes = scaled.to_le_bytes();
-                let _ = writer.write_all(&bytes[..3]);
+                writer.write_all(&bytes[..3])?;
             }
         }
     }
 
-    let _ = writer.flush();
+    writer.flush()
 }
 
 #[cfg(test)]
@@ -36,12 +39,10 @@ mod tests {
         let samples = [0.0_f32, -1.5_f32, 1.0_f32];
         let mut out = Vec::<u8>::new();
 
-        write_samples(&mut out, &samples, OutputSampleFormat::F32Le);
+        write_samples(&mut out, &samples, OutputSampleFormat::F32Le)
+            .expect("f32 write should succeed");
 
-        let expected: Vec<u8> = samples
-            .iter()
-            .flat_map(|s| s.to_le_bytes())
-            .collect();
+        let expected: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
         assert_eq!(out, expected);
     }
 
@@ -50,7 +51,8 @@ mod tests {
         let samples = [-1.0_f32, 0.0_f32, 1.0_f32];
         let mut out = Vec::<u8>::new();
 
-        write_samples(&mut out, &samples, OutputSampleFormat::S16Le);
+        write_samples(&mut out, &samples, OutputSampleFormat::S16Le)
+            .expect("s16 write should succeed");
 
         let expected: Vec<u8> = [i16::MIN + 1, 0_i16, i16::MAX]
             .iter()
@@ -64,7 +66,8 @@ mod tests {
         let samples = [-1.0_f32, 0.0_f32, 1.0_f32];
         let mut out = Vec::<u8>::new();
 
-        write_samples(&mut out, &samples, OutputSampleFormat::S24Le);
+        write_samples(&mut out, &samples, OutputSampleFormat::S24Le)
+            .expect("s24 write should succeed");
 
         let expected = vec![0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x7F];
         assert_eq!(out, expected);
@@ -75,7 +78,8 @@ mod tests {
         let samples = [-2.0_f32, -0.5_f32, 0.5_f32, 2.0_f32];
         let mut out = Vec::<u8>::new();
 
-        write_samples(&mut out, &samples, OutputSampleFormat::S16Le);
+        write_samples(&mut out, &samples, OutputSampleFormat::S16Le)
+            .expect("s16 write should succeed");
 
         let expected: Vec<u8> = [i16::MIN + 1, -16_384_i16, 16_384_i16, i16::MAX]
             .iter()
@@ -89,7 +93,8 @@ mod tests {
         let samples = [-2.0_f32, -0.5_f32, 0.5_f32, 2.0_f32];
         let mut out = Vec::<u8>::new();
 
-        write_samples(&mut out, &samples, OutputSampleFormat::S24Le);
+        write_samples(&mut out, &samples, OutputSampleFormat::S24Le)
+            .expect("s24 write should succeed");
 
         let expected = vec![
             0x01, 0x00, 0x80, // -1.0 (clamped)

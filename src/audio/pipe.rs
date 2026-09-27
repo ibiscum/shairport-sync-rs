@@ -1,10 +1,12 @@
 use shairplay::{AudioFormat, AudioSession};
 use std::fs::{File, OpenOptions};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use super::BackendFactory;
 use super::pcm::write_samples;
 use crate::config::OutputSampleFormat;
+use crate::observability::ActivityMonitor;
 
 pub struct PipeBackend {
     path: Option<String>,
@@ -21,7 +23,11 @@ impl PipeBackend {
 }
 
 impl BackendFactory for PipeBackend {
-    fn create_session(&self, _format: AudioFormat) -> Result<Box<dyn AudioSession>, String> {
+    fn create_session(
+        &self,
+        _format: AudioFormat,
+        monitor: Arc<ActivityMonitor>,
+    ) -> Result<Box<dyn AudioSession>, String> {
         let path = self
             .path
             .as_deref()
@@ -38,6 +44,7 @@ impl BackendFactory for PipeBackend {
         Ok(Box::new(PipeSession {
             writer: Mutex::new(file),
             output_format: self.output_format,
+            monitor,
         }))
     }
 }
@@ -45,12 +52,19 @@ impl BackendFactory for PipeBackend {
 struct PipeSession {
     writer: Mutex<File>,
     output_format: OutputSampleFormat,
+    monitor: Arc<ActivityMonitor>,
 }
 
 impl AudioSession for PipeSession {
     fn audio_process(&mut self, samples: &[f32]) {
         if let Ok(mut out) = self.writer.lock() {
-            write_samples(&mut *out, samples, self.output_format);
+            match write_samples(&mut *out, samples, self.output_format) {
+                Ok(()) => self.monitor.on_backend_samples_written(samples.len()),
+                Err(e) => self.monitor.on_backend_write_error("pipe", &e.to_string()),
+            }
+        } else {
+            self.monitor
+                .on_backend_write_error("pipe", "pipe writer mutex poisoned");
         }
     }
 }
