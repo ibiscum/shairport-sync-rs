@@ -10,11 +10,17 @@ use crate::observability::ActivityMonitor;
 
 pub struct AlsaBackend {
     device: Option<String>,
+    period_frames: Option<u32>,
+    buffer_frames: Option<u32>,
 }
 
 impl AlsaBackend {
-    pub fn new(device: Option<String>) -> Self {
-        Self { device }
+    pub fn new(device: Option<String>, period_frames: Option<u32>, buffer_frames: Option<u32>) -> Self {
+        Self {
+            device,
+            period_frames,
+            buffer_frames,
+        }
     }
 }
 
@@ -27,6 +33,8 @@ impl BackendFactory for AlsaBackend {
         Ok(Box::new(AlsaSession::new(
             format,
             self.device.as_deref(),
+            self.period_frames,
+            self.buffer_frames,
             monitor,
         )?))
     }
@@ -43,6 +51,8 @@ impl AlsaSession {
     fn new(
         format: AudioFormat,
         device: Option<&str>,
+        period_frames: Option<u32>,
+        buffer_frames: Option<u32>,
         monitor: Arc<ActivityMonitor>,
     ) -> Result<Self, String> {
         let device_name = device
@@ -70,10 +80,11 @@ impl AlsaSession {
                     )
                 })?;
 
-            // Constrain latency so AirPlay playout remains responsive.
-            // 1024-frame period, ~4 periods buffer (rounded by ALSA as needed).
-            let _ = hwp.set_period_size_near(1024, ValueOr::Nearest);
-            let _ = hwp.set_buffer_size_near(4096);
+            // Keep a responsive baseline unless overridden by config.
+            let period = i64::from(period_frames.unwrap_or(1024).max(1));
+            let buffer = i64::from(buffer_frames.unwrap_or(4096).max(1));
+            let _ = hwp.set_period_size_near(period, ValueOr::Nearest);
+            let _ = hwp.set_buffer_size_near(buffer);
 
             pcm.hw_params(&hwp)
                 .map_err(|e| format!("failed to apply ALSA hw params: {e}"))?;

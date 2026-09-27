@@ -35,6 +35,8 @@ pub fn make_handler_with_monitor(
         airplay_mode: cfg.airplay_mode,
         output_format: cfg.output_format,
         alsa_device: cfg.alsa_device.clone(),
+        alsa_period_frames: cfg.alsa_period_frames,
+        alsa_buffer_frames: cfg.alsa_buffer_frames,
         pipe_path: cfg.pipe_path.clone(),
         gain_state: Arc::new(Mutex::new(VolumeState {
             gain: 1.0,
@@ -50,6 +52,8 @@ struct AppAudioHandler {
     airplay_mode: AirPlayModeConfig,
     output_format: OutputSampleFormat,
     alsa_device: Option<String>,
+    alsa_period_frames: Option<u32>,
+    alsa_buffer_frames: Option<u32>,
     pipe_path: Option<String>,
     gain_state: Arc<Mutex<VolumeState>>,
     first_ap2_stream_logged: AtomicBool,
@@ -227,7 +231,11 @@ impl AudioHandler for AppAudioHandler {
                 self.output_format,
             )),
             #[cfg(target_os = "linux")]
-            AudioBackend::Alsa => Box::new(alsa::AlsaBackend::new(self.alsa_device.clone())),
+            AudioBackend::Alsa => Box::new(alsa::AlsaBackend::new(
+                self.alsa_device.clone(),
+                self.alsa_period_frames,
+                self.alsa_buffer_frames,
+            )),
         };
 
         match factory.create_session(format, Arc::clone(&self.activity_monitor)) {
@@ -309,6 +317,8 @@ mod tests {
             backend: AudioBackend::Null,
             output_format: OutputSampleFormat::F32Le,
             alsa_device: Some("default".to_string()),
+            alsa_period_frames: Some(1024),
+            alsa_buffer_frames: Some(4096),
             pipe_path: Some("/tmp/shairport-sync-rs-test-null.pcm".to_string()),
             password: None,
             max_clients: 1,
@@ -338,6 +348,8 @@ mod tests {
             backend: AudioBackend::Stdout,
             output_format: OutputSampleFormat::F32Le,
             alsa_device: Some("default".to_string()),
+            alsa_period_frames: Some(1024),
+            alsa_buffer_frames: Some(4096),
             pipe_path: Some("/tmp/shairport-sync-rs-test-stdout.pcm".to_string()),
             password: None,
             max_clients: 1,
@@ -367,6 +379,8 @@ mod tests {
             backend: AudioBackend::Pipe,
             output_format: OutputSampleFormat::F32Le,
             alsa_device: Some("default".to_string()),
+            alsa_period_frames: Some(1024),
+            alsa_buffer_frames: Some(4096),
             pipe_path: Some("/tmp/shairport-sync-rs-test-pipe.pcm".to_string()),
             password: None,
             max_clients: 1,
@@ -414,6 +428,8 @@ mod tests {
             backend: AudioBackend::Pipe,
             output_format: format,
             alsa_device: Some("default".to_string()),
+            alsa_period_frames: Some(1024),
+            alsa_buffer_frames: Some(4096),
             pipe_path: Some(path_str.clone()),
             password: None,
             max_clients: 1,
@@ -554,7 +570,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn alsa_backend_smoke_if_available() {
-        let backend = alsa::AlsaBackend::new(Some("default".to_string()));
+        let backend = alsa::AlsaBackend::new(Some("default".to_string()), Some(1024), Some(4096));
         let mut session =
             match backend.create_session(test_format(), Arc::new(ActivityMonitor::new(30, None))) {
                 Ok(session) => session,

@@ -30,7 +30,8 @@ Deliverables:
 
 Acceptance:
 - Receiver appears in AirPlay discovery.
-- Basic AP1 playback to a dummy or stdout backend works end-to-end.
+- AP1-ready playback path to a dummy or stdout backend is validated by automated checks:
+  AP1 mode startup/shutdown integration plus backend PCM write-path unit tests.
 
 ### M1 - Audio Core Parity
 Deliverables:

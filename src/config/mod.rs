@@ -35,7 +35,19 @@ pub struct Cli {
     )]
     pub alsa_device: Option<String>,
 
-    #[arg(long, help = "Output file/path for pipe backend (raw f32le stream)")]
+    #[arg(
+        long,
+        help = "ALSA period size in frames (Linux only, backend=alsa)"
+    )]
+    pub alsa_period_frames: Option<u32>,
+
+    #[arg(
+        long,
+        help = "ALSA buffer size in frames (Linux only, backend=alsa)"
+    )]
+    pub alsa_buffer_frames: Option<u32>,
+
+    #[arg(long, help = "Output file/path for pipe backend (raw PCM stream)")]
     pub pipe_path: Option<String>,
 
     #[arg(long, help = "HTTP Digest password")]
@@ -150,6 +162,8 @@ pub struct AppConfig {
     pub backend: AudioBackend,
     pub output_format: OutputSampleFormat,
     pub alsa_device: Option<String>,
+    pub alsa_period_frames: Option<u32>,
+    pub alsa_buffer_frames: Option<u32>,
     pub pipe_path: Option<String>,
     pub password: Option<String>,
     pub max_clients: usize,
@@ -172,6 +186,8 @@ struct FileConfig {
     backend: Option<AudioBackend>,
     output_format: Option<OutputSampleFormat>,
     alsa_device: Option<String>,
+    alsa_period_frames: Option<u32>,
+    alsa_buffer_frames: Option<u32>,
     pipe_path: Option<String>,
     password: Option<String>,
     max_clients: Option<usize>,
@@ -195,6 +211,8 @@ impl Default for AppConfig {
             backend: AudioBackend::Null,
             output_format: OutputSampleFormat::F32Le,
             alsa_device: Some("default".to_string()),
+            alsa_period_frames: Some(1024),
+            alsa_buffer_frames: Some(4096),
             pipe_path: Some("/tmp/shairport-sync-rs.pcm".to_string()),
             password: None,
             max_clients: 10,
@@ -244,6 +262,12 @@ impl AppConfig {
         }
         if let Some(v) = file.alsa_device {
             self.alsa_device = Some(v);
+        }
+        if let Some(v) = file.alsa_period_frames {
+            self.alsa_period_frames = Some(v);
+        }
+        if let Some(v) = file.alsa_buffer_frames {
+            self.alsa_buffer_frames = Some(v);
         }
         if let Some(v) = file.pipe_path {
             self.pipe_path = Some(v);
@@ -301,6 +325,12 @@ impl AppConfig {
         }
         if let Some(v) = &cli.alsa_device {
             self.alsa_device = Some(v.clone());
+        }
+        if let Some(v) = cli.alsa_period_frames {
+            self.alsa_period_frames = Some(v);
+        }
+        if let Some(v) = cli.alsa_buffer_frames {
+            self.alsa_buffer_frames = Some(v);
         }
         if let Some(v) = &cli.pipe_path {
             self.pipe_path = Some(v.clone());
@@ -395,6 +425,23 @@ impl AppConfig {
         }
         #[cfg(target_os = "linux")]
         {
+            if matches!(self.alsa_period_frames, Some(0)) {
+                return Err("alsa_period_frames must be greater than 0 when set".to_string());
+            }
+
+            if matches!(self.alsa_buffer_frames, Some(0)) {
+                return Err("alsa_buffer_frames must be greater than 0 when set".to_string());
+            }
+
+            if let (Some(period), Some(buffer)) = (self.alsa_period_frames, self.alsa_buffer_frames)
+                && buffer < period
+            {
+                return Err(
+                    "alsa_buffer_frames must be greater than or equal to alsa_period_frames"
+                        .to_string(),
+                );
+            }
+
             if matches!(self.backend, AudioBackend::Alsa)
                 && self
                     .alsa_device
@@ -442,6 +489,8 @@ mod tests {
             backend: AudioBackend::Null,
             output_format: OutputSampleFormat::F32Le,
             alsa_device: Some("default".to_string()),
+            alsa_period_frames: Some(1024),
+            alsa_buffer_frames: Some(4096),
             pipe_path: Some("/tmp/shairport-sync-rs-test.pcm".to_string()),
             password: None,
             max_clients: 1,
@@ -607,6 +656,46 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn validate_rejects_zero_alsa_period_frames() {
+        let mut cfg = valid_base();
+        cfg.backend = AudioBackend::Alsa;
+        cfg.alsa_period_frames = Some(0);
+
+        let err = cfg
+            .validate()
+            .expect_err("alsa_period_frames=0 should fail validation");
+        assert!(err.contains("alsa_period_frames"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn validate_rejects_zero_alsa_buffer_frames() {
+        let mut cfg = valid_base();
+        cfg.backend = AudioBackend::Alsa;
+        cfg.alsa_buffer_frames = Some(0);
+
+        let err = cfg
+            .validate()
+            .expect_err("alsa_buffer_frames=0 should fail validation");
+        assert!(err.contains("alsa_buffer_frames"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn validate_rejects_alsa_buffer_smaller_than_period() {
+        let mut cfg = valid_base();
+        cfg.backend = AudioBackend::Alsa;
+        cfg.alsa_period_frames = Some(2048);
+        cfg.alsa_buffer_frames = Some(1024);
+
+        let err = cfg
+            .validate()
+            .expect_err("alsa_buffer_frames < alsa_period_frames should fail validation");
+        assert!(err.contains("alsa_buffer_frames"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn validate_rejects_alsa_with_empty_device() {
         let mut cfg = valid_base();
         cfg.backend = AudioBackend::Alsa;
@@ -627,6 +716,8 @@ port = 6000
 backend = "pipe"
 output_format = "s24le"
 pipe_path = "/tmp/from-file.pcm"
+alsa_period_frames = 1536
+alsa_buffer_frames = 6144
 password = "file-pass"
 max_clients = 2
 raop_output_sample_rate = 44100
@@ -644,6 +735,8 @@ airplay_mode = "ap1"
             backend: None,
             output_format: Some(OutputSampleFormat::S16Le),
             alsa_device: None,
+            alsa_period_frames: Some(960),
+            alsa_buffer_frames: Some(3840),
             pipe_path: Some("/tmp/from-cli.pcm".to_string()),
             password: Some("cli-pass".to_string()),
             max_clients: Some(4),
@@ -665,6 +758,8 @@ airplay_mode = "ap1"
         assert_eq!(loaded.port, 7000);
         assert!(matches!(loaded.backend, AudioBackend::Pipe));
         assert_eq!(loaded.output_format, OutputSampleFormat::S16Le);
+        assert_eq!(loaded.alsa_period_frames, Some(960));
+        assert_eq!(loaded.alsa_buffer_frames, Some(3840));
         assert_eq!(loaded.pipe_path.as_deref(), Some("/tmp/from-cli.pcm"));
         assert_eq!(loaded.password.as_deref(), Some("cli-pass"));
         assert_eq!(loaded.max_clients, 4);
@@ -696,6 +791,8 @@ airplay_mode = "ap1"
             backend: None,
             output_format: None,
             alsa_device: None,
+            alsa_period_frames: None,
+            alsa_buffer_frames: None,
             pipe_path: None,
             password: None,
             max_clients: None,
@@ -727,6 +824,8 @@ airplay_mode = "ap1"
             backend: None,
             output_format: None,
             alsa_device: None,
+            alsa_period_frames: None,
+            alsa_buffer_frames: None,
             pipe_path: None,
             password: None,
             max_clients: None,
@@ -911,5 +1010,26 @@ airplay_mode = "ap1"
             loaded.ap2_pairing_store_path.as_deref(),
             Some("/tmp/ap2-pairings.json")
         );
+    }
+
+    #[test]
+    fn m0_minimal_config_surface_loads_name_port_mode_and_output_selection() {
+        let cli = parse_cli(&[
+            "shairport-sync-rs",
+            "--name",
+            "M0 Unit",
+            "--port",
+            "7001",
+            "--airplay-mode",
+            "ap1",
+            "--backend",
+            "stdout",
+        ]);
+
+        let loaded = AppConfig::load(&cli).expect("M0 minimal config should load");
+        assert_eq!(loaded.name, "M0 Unit");
+        assert_eq!(loaded.port, 7001);
+        assert_eq!(loaded.airplay_mode, AirPlayModeConfig::Ap1);
+        assert!(matches!(loaded.backend, AudioBackend::Stdout));
     }
 }

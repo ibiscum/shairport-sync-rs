@@ -46,7 +46,7 @@ impl StdoutSession {
 
 impl AudioSession for StdoutSession {
     fn audio_process(&mut self, samples: &[f32]) {
-        // M0 scaffold backend: raw f32le PCM frames written to stdout.
+        // M0 scaffold backend: raw PCM frames written to stdout in configured format.
         if let Ok(mut out) = self.writer.lock() {
             match write_samples(&mut *out, samples, self.output_format) {
                 Ok(()) => self.monitor.on_backend_samples_written(samples.len()),

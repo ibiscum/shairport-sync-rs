@@ -6,9 +6,9 @@ Its purpose is to provide a production-grade AirPlay audio receiver application 
 
 ## Purpose
 
-This repository is the application shell around shairplay-rust. It is intended to deliver:
+This repository is an application shell around shairplay-rust. It is intended to deliver:
 
-- Runtime and daemon behavior compatible with existing shairport-sync deployments.
+- Runtime and daemon behavior shall be compatible with existing shairport-sync deployments.
 - Config and CLI compatibility for migration from existing systems.
 - Audio backend integrations for Linux and BSD style deployments.
 - Metadata and control integrations used in home automation and desktop environments.
@@ -39,6 +39,8 @@ Supported M0 config keys (TOML):
 - `backend` (`"null"`, `"stdout"`, `"pipe"`, and on Linux `"alsa"`)
 - `output_format` (`"f32le"`, `"s16le"`, or `"s24le"`; currently applied to `stdout` and `pipe`, default `"f32le"`)
 - `alsa_device` (string, used by Linux ALSA backend; default `"default"`)
+- `alsa_period_frames` (integer, Linux ALSA backend period size in frames; default `1024`)
+- `alsa_buffer_frames` (integer, Linux ALSA backend buffer size in frames; default `4096`; must be >= `alsa_period_frames`)
 - `pipe_path` (string, used by `pipe` backend; default `"/tmp/shairport-sync-rs.pcm"`)
 - `password` (string)
 - `max_clients` (integer)
@@ -142,13 +144,13 @@ cargo run -- --backend null --name "SSR Debian Smoke" --port 5000
 Smoke test scripts (run from repository root):
 
 ```bash
-sh scripts/debian-smoke-test.sh
+bash scripts/debian-smoke-test.sh
 ```
 
 JSON variant for CI parsing:
 
 ```bash
-sh scripts/debian-smoke-test-json.sh
+bash scripts/debian-smoke-test-json.sh
 ```
 
 The JSON script prints one JSON object to stdout with `status` set to `passed` or `failed` and includes check-level details and log artifact paths.
@@ -174,6 +176,16 @@ To force AP1 mode during smoke tests, set launch overrides as well:
 ```bash
 AIRPLAY_MODE=ap1 AP1_CODECS="pcm,alac" AP1_ENCRYPTION="none" \
 AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test.sh
+```
+
+M0 evidence tests:
+
+```bash
+# Integration: AP1-mode runtime startup and clean SIGINT shutdown.
+cargo test --test m0_runtime_integration
+
+# Regression: discovery + AP1 advertisement checks via smoke JSON.
+cargo test --test m0_smoke_regression -- --ignored
 ```
 
 ## Observability and Activity Monitor
