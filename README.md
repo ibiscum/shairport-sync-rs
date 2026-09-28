@@ -103,6 +103,15 @@ cargo run -- \
 	--ap2-pairing-store-path /var/lib/shairport-sync-rs/ap2-pairings.toml
 ```
 
+Integration test ALSA
+
+```bash
+cargo run -- --backend pipe --pipe-path /tmp/ssr-ap1.pcm --airplay-mode ap1 --ap1-codecs pcm,alac --ap1-encryption none,rsa,fairplay
+
+
+RUST_LOG=info,shairplay=debug cargo run -- --name "Shairport Sync RS AP1" --port 5000 --backend alsa --alsa-device default --airplay-mode ap1 --ap1-codecs pcm,alac --ap1-encryption none --alsa-period-frames 1024 --alsa-buffer-frames 4096 --log-format json
+```
+
 Example:
 
 ```toml
@@ -110,6 +119,35 @@ name = "Shairport Sync RS"
 port = 5000
 backend = "null"
 max_clients = 10
+```
+
+Sectioned TOML layout (recommended):
+
+```toml
+[general]
+name = "Shairport Sync RS"
+port = 5000
+max_clients = 10
+
+[audio]
+backend = "alsa"
+output_format = "f32le"
+airplay_mode = "ap2"
+
+[audio.alsa]
+device = "default"
+period_frames = 1024
+buffer_frames = 4096
+
+[audio.pipewire]
+# Forward-compatible section for upcoming PipeWire backend support.
+# Keep backend = "alsa" until runtime PipeWire backend support lands.
+# application_name = "Shairport Sync RS"
+# output_rate = 48000
+
+[observability]
+activity_interval_secs = 30
+log_format = "text"
 ```
 
 Linux ALSA example:
@@ -178,6 +216,25 @@ AIRPLAY_MODE=ap1 AP1_CODECS="pcm,alac" AP1_ENCRYPTION="none" \
 AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test.sh
 ```
 
+Optional AP1 hold-window stability check (server must remain alive during hold):
+
+```bash
+HOLD_SECONDS=30 AIRPLAY_MODE=ap1 AP1_CODECS="pcm,alac" AP1_ENCRYPTION="none" \
+AP1_EXPECT_CN="0,1" AP1_EXPECT_ET="0" ./scripts/debian-smoke-test-json.sh
+```
+
+AP1 long-play soak harness (iterative AP1 startup/discovery/hold/shutdown checks):
+
+```bash
+ITERATIONS=10 HOLD_SECONDS=30 BUILD_FIRST=1 bash scripts/ap1-soak.sh
+```
+
+AP1/ALSA silence quick verdict from activity snapshots:
+
+```bash
+bash scripts/ap1-alsa-diagnose.sh /tmp/ssr-activity.jsonl
+```
+
 M0 evidence tests:
 
 ```bash
@@ -186,6 +243,12 @@ cargo test --test m0_runtime_integration
 
 # Regression: discovery + AP1 advertisement checks via smoke JSON.
 cargo test --test m0_smoke_regression -- --ignored
+
+# Regression: AP1 soak harness single-iteration check.
+cargo test --test ap1_soak_harness_regression -- --ignored
+
+# Regression: AP1 reconnect/gapless diagnostics counters.
+cargo test observability::tests::reconnect_and_gapless_regression_counters_progress_as_expected
 ```
 
 ## Observability and Activity Monitor
@@ -197,8 +260,10 @@ playback path and backends (null/stdout/pipe/alsa):
 - connected client count
 - audio callback/sample counters
 - backend write/error/recovery counters
-- ALSA underrun, buffer-depth, and latency counters
+- ALSA underrun, recovery-attempt/failure, buffer-depth, and latency counters
 - metadata update counters
+- sender action counters (connect/disconnect/reconnect, volume, metadata, flush)
+- gapless transition candidate counters (session rollover while active)
 
 Activity monitor controls (CLI/TOML):
 
@@ -210,11 +275,59 @@ Logging controls (CLI/TOML):
 - `RUST_LOG`: level/target filtering (default `info,shairplay=info`)
 - `log_format`: `text` (default) or `json`
 
-Environment overrides (optional, highest priority):
+SSR environment variables (`defaults < TOML file < SSR_* env < CLI`):
 
-- `SSR_LOG_FORMAT`
-- `SSR_ACTIVITY_INTERVAL_SECS`
-- `SSR_ACTIVITY_SNAPSHOT_PATH`
+- `SSR_NAME`: string (receiver display name)
+- `SSR_PORT`: integer (`u16`, e.g. `5000`)
+- `SSR_BACKEND`: `null` | `stdout` | `pipe` | `alsa` (Linux)
+- `SSR_OUTPUT_FORMAT`: `f32le` | `s16le` | `s24le`
+- `SSR_ALSA_DEVICE`: string (Linux ALSA device name)
+- `SSR_ALSA_PERIOD_FRAMES`: integer (`u32`)
+- `SSR_ALSA_BUFFER_FRAMES`: integer (`u32`)
+- `SSR_PIPE_PATH`: string (pipe backend output path)
+- `SSR_PASSWORD`: string
+- `SSR_MAX_CLIENTS`: integer (`usize`)
+- `SSR_RAOP_OUTPUT_SAMPLE_RATE`: integer (`u32`)
+- `SSR_RAOP_OUTPUT_MAX_CHANNELS`: integer (`u8`)
+- `SSR_AP1_CODECS`: comma-separated list of `pcm`, `alac`
+- `SSR_AP1_ENCRYPTION`: comma-separated list of `none`, `rsa`, `fairplay`
+- `SSR_AIRPLAY_MODE`: `ap1` | `ap2`
+- `SSR_AP2_PIN`: string
+- `SSR_AP2_PAIRING_STORE_PATH`: string
+- `SSR_ACTIVITY_INTERVAL_SECS`: integer (`u64`)
+- `SSR_ACTIVITY_SNAPSHOT_PATH`: string (JSONL output path)
+- `SSR_LOG_FORMAT`: `text` | `json`
+
+Diagnostics env variables (parsed in the same precedence chain):
+
+| Variable | Type / Allowed Values | Notes |
+| --- | --- | --- |
+| `SSR_DIAGNOSTICS_DISABLE_RESEND_REQUESTS` | bool: `yes/no`, `true/false`, `1/0` | Parsed; currently logs a compatibility warning (not yet wired to protocol behavior). |
+| `SSR_DIAGNOSTICS_STATISTICS` | bool: `yes/no`, `true/false`, `1/0` | Enables/disables periodic activity snapshot logging task. |
+| `SSR_DIAGNOSTICS_LOG_VERBOSITY` | integer `u8` (expected `0..3`) | Maps to default log filter when `RUST_LOG` is unset. |
+| `SSR_DIAGNOSTICS_LOG_SHOW_FILE_AND_LINE` | bool: `yes/no`, `true/false`, `1/0` | Toggles file/line fields in logger output. |
+| `SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_STARTUP` | bool: `yes/no`, `true/false`, `1/0` | Uses uptime-style timestamp in log formatter. |
+| `SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_LAST_MESSAGE` | bool: `yes/no`, `true/false`, `1/0` | Uses delta-since-last-message timestamp formatter. |
+| `SSR_DIAGNOSTICS_DROP_THIS_FRACTION_OF_AUDIO_PACKETS` | float `0.0..1.0` | Parsed/validated; currently logs a compatibility warning (simulation not yet wired). |
+| `SSR_DIAGNOSTICS_RETAIN_COVER_ART` | bool: `yes/no`, `true/false`, `1/0` | Parsed; currently logs a compatibility warning (retention behavior not yet wired). |
+| `SSR_DIAGNOSTICS_GET_PLIST_METADATA` | bool: `yes/no`, `true/false`, `1/0` | Parsed; currently logs a compatibility warning (plist stream not yet wired). |
+
+Diagnostics examples:
+
+```bash
+# JSON logs with high diagnostic verbosity and delta timestamps.
+SSR_LOG_FORMAT=json \
+SSR_DIAGNOSTICS_LOG_VERBOSITY=3 \
+SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_LAST_MESSAGE=yes \
+cargo run -- --backend null
+
+# Text logs tuned for Docker tailing with periodic stats snapshots.
+SSR_LOG_FORMAT=text \
+SSR_DIAGNOSTICS_STATISTICS=yes \
+SSR_DIAGNOSTICS_LOG_SHOW_FILE_AND_LINE=no \
+SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_STARTUP=yes \
+cargo run -- --backend alsa --alsa-device default
+```
 
 Examples:
 
@@ -222,6 +335,7 @@ Examples:
 cargo run -- --backend null --log-format json
 cargo run -- --backend alsa --activity-interval-secs 10 --activity-snapshot-path /tmp/ssr-activity.jsonl
 SSR_LOG_FORMAT=json RUST_LOG=info,shairplay=debug cargo run -- --backend null
+SSR_BACKEND=pipe SSR_PIPE_PATH=/tmp/ssr-env.pcm SSR_OUTPUT_FORMAT=s24le cargo run
 ```
 
 ### Troubleshooting

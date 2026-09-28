@@ -22,10 +22,6 @@ trait BackendFactory: Send + Sync {
     ) -> Result<Box<dyn AudioSession>, String>;
 }
 
-pub fn make_handler(cfg: &AppConfig) -> Arc<dyn AudioHandler> {
-    make_handler_with_monitor(cfg, Arc::new(ActivityMonitor::new(30, None)))
-}
-
 pub fn make_handler_with_monitor(
     cfg: &AppConfig,
     monitor: Arc<ActivityMonitor>,
@@ -45,6 +41,11 @@ pub fn make_handler_with_monitor(
         first_ap2_stream_logged: AtomicBool::new(false),
         activity_monitor: monitor,
     })
+}
+
+#[cfg(test)]
+fn make_handler(cfg: &AppConfig) -> Arc<dyn AudioHandler> {
+    make_handler_with_monitor(cfg, Arc::new(ActivityMonitor::new(30, None)))
 }
 
 struct AppAudioHandler {
@@ -192,6 +193,15 @@ fn volume_to_linear(raw_volume: f32, current_mode: Option<VolumeMode>) -> (f32, 
     (gain, mode)
 }
 
+fn volume_mode_label(mode: Option<VolumeMode>) -> &'static str {
+    match mode {
+        Some(VolumeMode::Db) => "db",
+        Some(VolumeMode::Linear) => "linear",
+        Some(VolumeMode::Percent) => "percent",
+        None => "unknown",
+    }
+}
+
 impl AudioHandler for AppAudioHandler {
     fn audio_init(&self, format: AudioFormat) -> Box<dyn AudioSession> {
         if self.airplay_mode == AirPlayModeConfig::Ap2
@@ -271,6 +281,8 @@ impl AudioHandler for AppAudioHandler {
             mode = Some(new_mode);
         }
         debug!(raw_volume = volume, gain, ?mode, "volume update");
+        self.activity_monitor
+            .on_volume_event(volume, gain, volume_mode_label(mode));
 
         if gain <= 0.0 {
             debug!(raw_volume = volume, ?mode, "effective gain is mute");
@@ -332,6 +344,17 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);
@@ -363,6 +386,17 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);
@@ -394,6 +428,17 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);
@@ -443,6 +488,17 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);

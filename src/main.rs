@@ -7,8 +7,12 @@ use clap::Parser;
 use config::{AirPlayModeConfig, Ap1CodecConfig, Ap1EncryptionConfig, AppConfig, Cli, LogFormat};
 use observability::ActivityMonitor;
 use shairplay::{AirPlayMode, Ap1Codec, Ap1Encryption, RaopServer, RaopServerBuilder};
-use std::sync::Arc;
-use tracing::{error, info};
+use std::fmt;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tracing::{error, info, warn};
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::runtime::pairing_store::FilePairingStore;
@@ -26,20 +30,33 @@ async fn run() -> Result<(), String> {
     let cfg = AppConfig::load(&cli)?;
     init_tracing(&cfg);
 
-    let activity_interval_secs = std::env::var("SSR_ACTIVITY_INTERVAL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(cfg.activity_interval_secs);
-    let activity_snapshot_path = std::env::var("SSR_ACTIVITY_SNAPSHOT_PATH")
-        .ok()
-        .or(cfg.activity_snapshot_path.clone());
+    if cfg.diagnostics.disable_resend_requests {
+        warn!(
+            "diagnostics.disable_resend_requests is configured but not yet wired to protocol behavior"
+        );
+    }
+    if cfg.diagnostics.drop_this_fraction_of_audio_packets > 0.0 {
+        warn!(
+            drop_fraction = cfg.diagnostics.drop_this_fraction_of_audio_packets,
+            "diagnostics.drop_this_fraction_of_audio_packets is configured but packet-loss simulation is not yet wired"
+        );
+    }
+    if cfg.diagnostics.retain_cover_art {
+        warn!("diagnostics.retain_cover_art is configured but metadata artwork retention is not yet wired");
+    }
+    if cfg.diagnostics.get_plist_metadata {
+        warn!("diagnostics.get_plist_metadata is configured but plist metadata stream is not yet wired");
+    }
 
     let activity_monitor = Arc::new(ActivityMonitor::new(
-        activity_interval_secs,
-        activity_snapshot_path,
+        cfg.activity_interval_secs,
+        cfg.activity_snapshot_path.clone(),
     ));
-    let activity_logger_task = activity_monitor.spawn_periodic_logger();
+    let activity_logger_task = if cfg.diagnostics.statistics {
+        Some(activity_monitor.spawn_periodic_logger())
+    } else {
+        None
+    };
     let handler = audio::make_handler_with_monitor(&cfg, Arc::clone(&activity_monitor));
 
     let mut builder = RaopServer::builder()
@@ -71,36 +88,67 @@ async fn run() -> Result<(), String> {
 
     let run_result = runtime::run_until_shutdown(&mut server).await;
     activity_monitor.log_snapshot("shutdown");
-    activity_logger_task.abort();
+    if let Some(task) = activity_logger_task {
+        task.abort();
+    }
     run_result
 }
 
 fn init_tracing(cfg: &AppConfig) {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,shairplay=info"));
-    let log_format = std::env::var("SSR_LOG_FORMAT")
-        .ok()
-        .map(|v| {
-            if v.eq_ignore_ascii_case("json") {
-                LogFormat::Json
-            } else {
-                LogFormat::Text
-            }
-        })
-        .unwrap_or(cfg.log_format);
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_filter_for_verbosity(cfg.diagnostics.log_verbosity)));
+    let log_format = cfg.log_format;
+    let show_file_and_line = cfg.diagnostics.log_show_file_and_line;
+    let use_uptime = cfg.diagnostics.log_show_time_since_startup;
+    let use_delta = cfg.diagnostics.log_show_time_since_last_message;
+
+    if use_uptime && use_delta {
+        warn!(
+            "both diagnostics.log_show_time_since_startup and diagnostics.log_show_time_since_last_message are enabled; using time-since-last-message"
+        );
+    }
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(true)
         .with_thread_names(true)
-        .with_file(true)
-        .with_line_number(true);
+        .with_file(show_file_and_line)
+        .with_line_number(show_file_and_line);
 
     if matches!(log_format, LogFormat::Json) {
+        if use_delta {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(
+                    fmt_layer
+                        .with_timer(DeltaTimer::new())
+                        .json()
+                        .with_current_span(true)
+                        .with_span_list(true),
+                )
+                .init();
+            return;
+        }
+
+        if use_uptime {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(
+                    fmt_layer
+                        .with_timer(UptimeTimer::new())
+                        .json()
+                        .with_current_span(true)
+                        .with_span_list(true),
+                )
+                .init();
+            return;
+        }
+
         tracing_subscriber::registry()
             .with(env_filter)
             .with(
                 fmt_layer
+                    .with_timer(SystemTimer::new())
                     .json()
                     .with_current_span(true)
                     .with_span_list(true),
@@ -109,10 +157,98 @@ fn init_tracing(cfg: &AppConfig) {
         return;
     }
 
+    if use_delta {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer.with_timer(DeltaTimer::new()))
+            .init();
+        return;
+    }
+
+    if use_uptime {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer.with_timer(UptimeTimer::new()))
+            .init();
+        return;
+    }
+
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(fmt_layer)
+        .with(fmt_layer.with_timer(SystemTimer::new()))
         .init();
+}
+
+fn default_filter_for_verbosity(level: u8) -> &'static str {
+    match level {
+        0 => "info,shairplay=info",
+        1 => "debug,shairplay=debug",
+        _ => "trace,shairplay=trace",
+    }
+}
+
+struct SystemTimer;
+
+impl SystemTimer {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl FormatTime for SystemTimer {
+    fn format_time(&self, w: &mut Writer<'_>) -> fmt::Result {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO);
+        write!(w, "{}.{:03}", now.as_secs(), now.subsec_millis())
+    }
+}
+
+struct UptimeTimer {
+    start: Instant,
+}
+
+impl UptimeTimer {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+}
+
+impl FormatTime for UptimeTimer {
+    fn format_time(&self, w: &mut Writer<'_>) -> fmt::Result {
+        let elapsed = self.start.elapsed();
+        write!(w, "+{}.{:03}s", elapsed.as_secs(), elapsed.subsec_millis())
+    }
+}
+
+struct DeltaTimer {
+    last: Mutex<Option<Instant>>,
+}
+
+impl DeltaTimer {
+    fn new() -> Self {
+        Self {
+            last: Mutex::new(None),
+        }
+    }
+}
+
+impl FormatTime for DeltaTimer {
+    fn format_time(&self, w: &mut Writer<'_>) -> fmt::Result {
+        let now = Instant::now();
+        let mut guard = match self.last.lock() {
+            Ok(v) => v,
+            Err(_) => return write!(w, "+0.000s"),
+        };
+        let delta = match *guard {
+            Some(last) => now.saturating_duration_since(last),
+            None => Duration::ZERO,
+        };
+        *guard = Some(now);
+        write!(w, "+{}.{:03}s", delta.as_secs(), delta.subsec_millis())
+    }
 }
 
 fn apply_raop_protocol_config(

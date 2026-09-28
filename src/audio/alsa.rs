@@ -174,6 +174,7 @@ impl AudioSession for AlsaSession {
                     warn!(error = %e, "ALSA write failed, attempting device prepare");
                     self.monitor.on_backend_write_error("alsa", &e.to_string());
                     self.monitor.on_alsa_underrun();
+                    self.monitor.on_alsa_recovery_attempt();
 
                     if pcm.try_recover(e, true).is_ok() {
                         self.monitor.on_backend_recovery("alsa");
@@ -184,6 +185,8 @@ impl AudioSession for AlsaSession {
                         warn!(error = %prepare_err, "ALSA recover prepare failed");
                         self.monitor
                             .on_backend_write_error("alsa", &prepare_err.to_string());
+                        self.monitor
+                            .on_alsa_recovery_failure(&prepare_err.to_string());
                         break;
                     }
 

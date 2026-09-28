@@ -16,12 +16,15 @@ BACKEND="${BACKEND:-null}"
 LOG_FILE="${LOG_FILE:-/tmp/shairport-sync-rs-smoke.log}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-20}"
 MDNS_TIMEOUT_SECONDS="${MDNS_TIMEOUT_SECONDS:-10}"
+HOLD_SECONDS="${HOLD_SECONDS:-0}"
 BUILD_FIRST="${BUILD_FIRST:-1}"
 AP1_EXPECT_CN="${AP1_EXPECT_CN:-}"
 AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
 AIRPLAY_MODE="${AIRPLAY_MODE:-}"
 AP1_CODECS="${AP1_CODECS:-}"
 AP1_ENCRYPTION="${AP1_ENCRYPTION:-}"
+ACTIVITY_INTERVAL_SECS="${ACTIVITY_INTERVAL_SECS:-}"
+ACTIVITY_SNAPSHOT_PATH="${ACTIVITY_SNAPSHOT_PATH:-}"
 
 APP_PID=""
 STARTED="false"
@@ -99,7 +102,10 @@ emit_json() {
     printf '"ap1_encryption":"%s",' "$(json_escape "$AP1_ENCRYPTION")"
     printf '"build_first":%s,' "$( [[ "$BUILD_FIRST" == "1" ]] && echo true || echo false )"
     printf '"ap1_expect_cn":"%s",' "$(json_escape "$AP1_EXPECT_CN")"
-    printf '"ap1_expect_et":"%s"' "$(json_escape "$AP1_EXPECT_ET")"
+    printf '"ap1_expect_et":"%s",' "$(json_escape "$AP1_EXPECT_ET")"
+    printf '"hold_seconds":%s,' "$(json_escape "$HOLD_SECONDS")"
+    printf '"activity_interval_secs":"%s",' "$(json_escape "$ACTIVITY_INTERVAL_SECS")"
+    printf '"activity_snapshot_path":"%s"' "$(json_escape "$ACTIVITY_SNAPSHOT_PATH")"
     printf '},'
     printf '"artifacts":{'
     printf '"log_file":"%s",' "$(json_escape "$LOG_FILE")"
@@ -157,6 +163,12 @@ if [[ -n "${AP1_CODECS}" ]]; then
 fi
 if [[ -n "${AP1_ENCRYPTION}" ]]; then
     run_args+=(--ap1-encryption "${AP1_ENCRYPTION}")
+fi
+if [[ -n "${ACTIVITY_INTERVAL_SECS}" ]]; then
+    run_args+=(--activity-interval-secs "${ACTIVITY_INTERVAL_SECS}")
+fi
+if [[ -n "${ACTIVITY_SNAPSHOT_PATH}" ]]; then
+    run_args+=(--activity-snapshot-path "${ACTIVITY_SNAPSHOT_PATH}")
 fi
 RUST_LOG="${RUST_LOG:-info}" cargo run -- "${run_args[@]}" >"${LOG_FILE}" 2>&1 &
 APP_PID=$!
@@ -243,6 +255,17 @@ if [[ -n "${AP1_EXPECT_ET}" && "${AP1_ACTUAL_ET}" != "${AP1_EXPECT_ET}" ]]; then
     ERROR_MESSAGE="AP1 et mismatch: expected '${AP1_EXPECT_ET}', got '${AP1_ACTUAL_ET:-<missing>}'"
     emit_json "failed"
     exit 1
+fi
+
+if [[ "${HOLD_SECONDS}" != "0" ]]; then
+    log "Holding AP1 server for ${HOLD_SECONDS}s to observe stability..."
+    sleep "${HOLD_SECONDS}"
+    if ! kill -0 "${APP_PID}" >/dev/null 2>&1; then
+        ERROR_STAGE="hold-check"
+        ERROR_MESSAGE="server exited during hold window (${HOLD_SECONDS}s)"
+        emit_json "failed"
+        exit 1
+    fi
 fi
 
 cleanup

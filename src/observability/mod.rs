@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Clone)]
 pub struct ActivityMonitor {
@@ -21,13 +21,23 @@ pub struct ActivityMonitor {
     backend_samples_out: Arc<AtomicU64>,
     backend_write_errors: Arc<AtomicU64>,
     backend_recoveries: Arc<AtomicU64>,
+    alsa_recovery_attempts: Arc<AtomicU64>,
+    alsa_recovery_failures: Arc<AtomicU64>,
     alsa_underruns: Arc<AtomicU64>,
     alsa_buffer_frames_last: Arc<AtomicU64>,
     alsa_buffer_frames_max: Arc<AtomicU64>,
     alsa_latency_us_last: Arc<AtomicU64>,
     alsa_latency_us_max: Arc<AtomicU64>,
     metadata_updates: Arc<AtomicU64>,
+    sender_connect_events: Arc<AtomicU64>,
+    sender_disconnect_events: Arc<AtomicU64>,
+    sender_reconnect_events: Arc<AtomicU64>,
+    sender_volume_events: Arc<AtomicU64>,
+    sender_metadata_events: Arc<AtomicU64>,
+    sender_flush_events: Arc<AtomicU64>,
+    gapless_transitions: Arc<AtomicU64>,
     connected_clients: Arc<Mutex<HashSet<String>>>,
+    seen_clients: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ActivityMonitor {
@@ -50,13 +60,23 @@ impl ActivityMonitor {
             backend_samples_out: Arc::new(AtomicU64::new(0)),
             backend_write_errors: Arc::new(AtomicU64::new(0)),
             backend_recoveries: Arc::new(AtomicU64::new(0)),
+            alsa_recovery_attempts: Arc::new(AtomicU64::new(0)),
+            alsa_recovery_failures: Arc::new(AtomicU64::new(0)),
             alsa_underruns: Arc::new(AtomicU64::new(0)),
             alsa_buffer_frames_last: Arc::new(AtomicU64::new(0)),
             alsa_buffer_frames_max: Arc::new(AtomicU64::new(0)),
             alsa_latency_us_last: Arc::new(AtomicU64::new(0)),
             alsa_latency_us_max: Arc::new(AtomicU64::new(0)),
             metadata_updates: Arc::new(AtomicU64::new(0)),
+            sender_connect_events: Arc::new(AtomicU64::new(0)),
+            sender_disconnect_events: Arc::new(AtomicU64::new(0)),
+            sender_reconnect_events: Arc::new(AtomicU64::new(0)),
+            sender_volume_events: Arc::new(AtomicU64::new(0)),
+            sender_metadata_events: Arc::new(AtomicU64::new(0)),
+            sender_flush_events: Arc::new(AtomicU64::new(0)),
+            gapless_transitions: Arc::new(AtomicU64::new(0)),
             connected_clients: Arc::new(Mutex::new(HashSet::new())),
+            seen_clients: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -89,12 +109,21 @@ impl ActivityMonitor {
             backend_samples_out = self.backend_samples_out.load(Ordering::Relaxed),
             backend_write_errors = self.backend_write_errors.load(Ordering::Relaxed),
             backend_recoveries = self.backend_recoveries.load(Ordering::Relaxed),
+            alsa_recovery_attempts = self.alsa_recovery_attempts.load(Ordering::Relaxed),
+            alsa_recovery_failures = self.alsa_recovery_failures.load(Ordering::Relaxed),
             alsa_underruns = self.alsa_underruns.load(Ordering::Relaxed),
             alsa_buffer_frames_last = self.alsa_buffer_frames_last.load(Ordering::Relaxed),
             alsa_buffer_frames_max = self.alsa_buffer_frames_max.load(Ordering::Relaxed),
             alsa_latency_us_last = self.alsa_latency_us_last.load(Ordering::Relaxed),
             alsa_latency_us_max = self.alsa_latency_us_max.load(Ordering::Relaxed),
             metadata_updates = self.metadata_updates.load(Ordering::Relaxed),
+            sender_connect_events = self.sender_connect_events.load(Ordering::Relaxed),
+            sender_disconnect_events = self.sender_disconnect_events.load(Ordering::Relaxed),
+            sender_reconnect_events = self.sender_reconnect_events.load(Ordering::Relaxed),
+            sender_volume_events = self.sender_volume_events.load(Ordering::Relaxed),
+            sender_metadata_events = self.sender_metadata_events.load(Ordering::Relaxed),
+            sender_flush_events = self.sender_flush_events.load(Ordering::Relaxed),
+            gapless_transitions = self.gapless_transitions.load(Ordering::Relaxed),
             "activity snapshot"
         );
 
@@ -102,6 +131,16 @@ impl ActivityMonitor {
     }
 
     pub fn on_session_started(&self, format: AudioFormat, backend: &'static str) {
+        if self.active_sessions.load(Ordering::Relaxed) > 0 {
+            self.gapless_transitions.fetch_add(1, Ordering::Relaxed);
+            info!(
+                target: "activity_monitor",
+                backend,
+                gapless_transitions = self.gapless_transitions.load(Ordering::Relaxed),
+                "gapless transition candidate detected"
+            );
+        }
+
         self.started_sessions.fetch_add(1, Ordering::Relaxed);
         self.active_sessions.fetch_add(1, Ordering::Relaxed);
 
@@ -126,6 +165,7 @@ impl ActivityMonitor {
 
     pub fn on_audio_flushed(&self) {
         self.audio_flushes.fetch_add(1, Ordering::Relaxed);
+        self.sender_flush_events.fetch_add(1, Ordering::Relaxed);
         let mut current = self.active_sessions.load(Ordering::Relaxed);
         while current > 0 {
             match self.active_sessions.compare_exchange_weak(
@@ -166,8 +206,35 @@ impl ActivityMonitor {
         );
     }
 
+    pub fn on_alsa_recovery_attempt(&self) {
+        self.alsa_recovery_attempts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn on_alsa_recovery_failure(&self, error: &str) {
+        self.alsa_recovery_failures.fetch_add(1, Ordering::Relaxed);
+        warn!(
+            target: "activity_monitor",
+            error,
+            alsa_recovery_failures = self.alsa_recovery_failures.load(Ordering::Relaxed),
+            "ALSA recovery failed"
+        );
+    }
+
     pub fn on_metadata_update(&self) {
         self.metadata_updates.fetch_add(1, Ordering::Relaxed);
+        self.sender_metadata_events.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn on_volume_event(&self, raw_volume: f32, gain: f32, mode: &str) {
+        self.sender_volume_events.fetch_add(1, Ordering::Relaxed);
+        debug!(
+            target: "activity_monitor",
+            raw_volume,
+            gain,
+            mode,
+            sender_volume_events = self.sender_volume_events.load(Ordering::Relaxed),
+            "sender volume update"
+        );
     }
 
     pub fn on_alsa_underrun(&self) {
@@ -188,11 +255,33 @@ impl ActivityMonitor {
 
     pub fn on_client_connected(&self, addr: &str) {
         if let Ok(mut clients) = self.connected_clients.lock() {
-            clients.insert(addr.to_string());
+            let inserted = clients.insert(addr.to_string());
+            if !inserted {
+                return;
+            }
+
+            self.sender_connect_events.fetch_add(1, Ordering::Relaxed);
+
+            if let Ok(mut seen) = self.seen_clients.lock() {
+                if seen.contains(addr) {
+                    self.sender_reconnect_events.fetch_add(1, Ordering::Relaxed);
+                    info!(
+                        target: "activity_monitor",
+                        client = addr,
+                        sender_reconnect_events =
+                            self.sender_reconnect_events.load(Ordering::Relaxed),
+                        "client reconnected"
+                    );
+                } else {
+                    seen.insert(addr.to_string());
+                }
+            }
+
             info!(
                 target: "activity_monitor",
                 client = addr,
                 connected_clients = clients.len(),
+                sender_connect_events = self.sender_connect_events.load(Ordering::Relaxed),
                 "client connected"
             );
         }
@@ -200,11 +289,17 @@ impl ActivityMonitor {
 
     pub fn on_client_disconnected(&self, addr: &str) {
         if let Ok(mut clients) = self.connected_clients.lock() {
-            clients.remove(addr);
+            if !clients.remove(addr) {
+                return;
+            }
+
+            self.sender_disconnect_events.fetch_add(1, Ordering::Relaxed);
             info!(
                 target: "activity_monitor",
                 client = addr,
                 connected_clients = clients.len(),
+                sender_disconnect_events =
+                    self.sender_disconnect_events.load(Ordering::Relaxed),
                 "client disconnected"
             );
         }
@@ -232,12 +327,21 @@ impl ActivityMonitor {
             "backend_samples_out": self.backend_samples_out.load(Ordering::Relaxed),
             "backend_write_errors": self.backend_write_errors.load(Ordering::Relaxed),
             "backend_recoveries": self.backend_recoveries.load(Ordering::Relaxed),
+            "alsa_recovery_attempts": self.alsa_recovery_attempts.load(Ordering::Relaxed),
+            "alsa_recovery_failures": self.alsa_recovery_failures.load(Ordering::Relaxed),
             "alsa_underruns": self.alsa_underruns.load(Ordering::Relaxed),
             "alsa_buffer_frames_last": self.alsa_buffer_frames_last.load(Ordering::Relaxed),
             "alsa_buffer_frames_max": self.alsa_buffer_frames_max.load(Ordering::Relaxed),
             "alsa_latency_us_last": self.alsa_latency_us_last.load(Ordering::Relaxed),
             "alsa_latency_us_max": self.alsa_latency_us_max.load(Ordering::Relaxed),
-            "metadata_updates": self.metadata_updates.load(Ordering::Relaxed)
+            "metadata_updates": self.metadata_updates.load(Ordering::Relaxed),
+            "sender_connect_events": self.sender_connect_events.load(Ordering::Relaxed),
+            "sender_disconnect_events": self.sender_disconnect_events.load(Ordering::Relaxed),
+            "sender_reconnect_events": self.sender_reconnect_events.load(Ordering::Relaxed),
+            "sender_volume_events": self.sender_volume_events.load(Ordering::Relaxed),
+            "sender_metadata_events": self.sender_metadata_events.load(Ordering::Relaxed),
+            "sender_flush_events": self.sender_flush_events.load(Ordering::Relaxed),
+            "gapless_transitions": self.gapless_transitions.load(Ordering::Relaxed)
         });
 
         let mut file = match OpenOptions::new().create(true).append(true).open(path) {
@@ -328,12 +432,21 @@ mod tests {
                 "backend_samples_out",
                 "backend_write_errors",
                 "backend_recoveries",
+                "alsa_recovery_attempts",
+                "alsa_recovery_failures",
                 "alsa_underruns",
                 "alsa_buffer_frames_last",
                 "alsa_buffer_frames_max",
                 "alsa_latency_us_last",
                 "alsa_latency_us_max",
                 "metadata_updates",
+                "sender_connect_events",
+                "sender_disconnect_events",
+                "sender_reconnect_events",
+                "sender_volume_events",
+                "sender_metadata_events",
+                "sender_flush_events",
+                "gapless_transitions",
             ] {
                 assert!(value.get(key).is_some(), "missing field: {key}");
             }
@@ -349,5 +462,48 @@ mod tests {
         }
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reconnect_and_gapless_regression_counters_progress_as_expected() {
+        let monitor = ActivityMonitor::new(1, None);
+        let format = AudioFormat {
+            codec: AudioCodec::Pcm,
+            bits: 32,
+            channels: 2,
+            sample_rate: 44_100,
+        };
+
+        monitor.on_session_started(format, "null");
+        monitor.on_session_started(format, "null");
+        monitor.on_audio_flushed();
+        monitor.on_audio_flushed();
+
+        monitor.on_client_connected("127.0.0.1:5001");
+        monitor.on_client_disconnected("127.0.0.1:5001");
+        monitor.on_client_connected("127.0.0.1:5001");
+
+        assert_eq!(monitor.gapless_transitions.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.sender_connect_events.load(Ordering::Relaxed), 2);
+        assert_eq!(monitor.sender_disconnect_events.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.sender_reconnect_events.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.active_sessions.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn sender_action_counters_track_volume_metadata_flush_and_alsa_recovery() {
+        let monitor = ActivityMonitor::new(1, None);
+
+        monitor.on_volume_event(-10.5, 0.298_538_27, "db");
+        monitor.on_metadata_update();
+        monitor.on_audio_flushed();
+        monitor.on_alsa_recovery_attempt();
+        monitor.on_alsa_recovery_failure("mock prepare failure");
+
+        assert_eq!(monitor.sender_volume_events.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.sender_metadata_events.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.sender_flush_events.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.alsa_recovery_attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.alsa_recovery_failures.load(Ordering::Relaxed), 1);
     }
 }
