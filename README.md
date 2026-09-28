@@ -18,6 +18,11 @@ In short:
 - shairplay-rust provides protocol and media core logic.
 - shairport-sync-rs provides the executable, integration surfaces, and operational compatibility.
 
+## Architecture Docs
+
+- [System Architecture and Behaviour](docs/SYSTEM_ARCHITECTURE_AND_BEHAVIOUR.md)
+- [Parity Matrix](docs/PARITY_MATRIX.md)
+
 ## M0 Scaffold Quick Start
 
 Build and run the initial M0 slice:
@@ -347,10 +352,10 @@ cargo run -- --backend null
 
 # Text logs tuned for Docker tailing with periodic stats snapshots.
 SSR_LOG_FORMAT=text \
-SSR_DIAGNOSTICS_LOG_VERBOSITY=3 \
+SSR_DIAGNOSTICS_LOG_VERBOSITY=2 \
 SSR_DIAGNOSTICS_STATISTICS=yes \
 SSR_DIAGNOSTICS_LOG_SHOW_FILE_AND_LINE=yes \
-SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_STARTUP=yes \
+SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_STARTUP=no \
 cargo run -- \
 	--name "Shairport Sync RS AP1" \
 	--backend alsa \
