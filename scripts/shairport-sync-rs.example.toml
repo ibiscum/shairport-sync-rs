@@ -100,6 +100,20 @@ buffer_frames = 4096
 # codecs = ["pcm", "alac"]
 # encryption = ["none", "rsa"]
 
+# AP1 + ALSA example (encryption none,rsa,fairplay):
+# [audio]
+# backend = "alsa"
+# airplay_mode = "ap1"
+#
+# [audio.alsa]
+# device = "default"
+# period_frames = 1024
+# buffer_frames = 4096
+#
+# [ap1]
+# codecs = ["pcm", "alac"]
+# encryption = ["none", "rsa", "fairplay"]
+
 [ap2]
 # Applies when audio.airplay_mode = "ap2"
 # pin = "12345678"
@@ -109,6 +123,7 @@ buffer_frames = 4096
 activity_interval_secs = 30
 # activity_snapshot_path = "/var/log/shairport-sync-rs/activity.jsonl"
 log_format = "text"
+# log_filter = "info,shairplay=info"
 
 # -----------------------------------------------------------------------------
 # Upstream compatibility placeholders
@@ -190,3 +205,4 @@ log_format = "text"
 # SSR_ACTIVITY_INTERVAL_SECS=15
 # SSR_ACTIVITY_SNAPSHOT_PATH=/tmp/activity.jsonl
 # SSR_LOG_FORMAT=json
+# SSR_LOG_FILTER=info,shairplay=debug

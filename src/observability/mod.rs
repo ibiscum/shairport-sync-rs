@@ -9,6 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
+const STREAMING_ACTIVITY_WINDOW_MS: u64 = 5_000;
+
 #[derive(Clone)]
 pub struct ActivityMonitor {
     interval: Duration,
@@ -17,6 +19,7 @@ pub struct ActivityMonitor {
     active_sessions: Arc<AtomicU64>,
     audio_flushes: Arc<AtomicU64>,
     audio_callbacks: Arc<AtomicU64>,
+    last_audio_callback_ms: Arc<AtomicU64>,
     audio_samples_in: Arc<AtomicU64>,
     backend_samples_out: Arc<AtomicU64>,
     backend_write_errors: Arc<AtomicU64>,
@@ -56,6 +59,7 @@ impl ActivityMonitor {
             active_sessions: Arc::new(AtomicU64::new(0)),
             audio_flushes: Arc::new(AtomicU64::new(0)),
             audio_callbacks: Arc::new(AtomicU64::new(0)),
+            last_audio_callback_ms: Arc::new(AtomicU64::new(0)),
             audio_samples_in: Arc::new(AtomicU64::new(0)),
             backend_samples_out: Arc::new(AtomicU64::new(0)),
             backend_write_errors: Arc::new(AtomicU64::new(0)),
@@ -96,12 +100,14 @@ impl ActivityMonitor {
             Ok(clients) => clients.len() as u64,
             Err(_) => 0,
         };
+        let streaming_now = self.streaming_now();
 
         info!(
             target: "activity_monitor",
             reason,
             started_sessions = self.started_sessions.load(Ordering::Relaxed),
             active_sessions = self.active_sessions.load(Ordering::Relaxed),
+            streaming_now,
             connected_clients,
             audio_callbacks = self.audio_callbacks.load(Ordering::Relaxed),
             audio_samples_in = self.audio_samples_in.load(Ordering::Relaxed),
@@ -127,7 +133,7 @@ impl ActivityMonitor {
             "activity snapshot"
         );
 
-        self.append_snapshot_jsonl(reason, connected_clients);
+        self.append_snapshot_jsonl(reason, connected_clients, streaming_now);
     }
 
     pub fn on_session_started(&self, format: AudioFormat, backend: &'static str) {
@@ -159,6 +165,8 @@ impl ActivityMonitor {
 
     pub fn on_audio_callback(&self, sample_count: usize) {
         self.audio_callbacks.fetch_add(1, Ordering::Relaxed);
+        self.last_audio_callback_ms
+            .store(now_unix_ms(), Ordering::Relaxed);
         self.audio_samples_in
             .fetch_add(sample_count as u64, Ordering::Relaxed);
     }
@@ -166,18 +174,16 @@ impl ActivityMonitor {
     pub fn on_audio_flushed(&self) {
         self.audio_flushes.fetch_add(1, Ordering::Relaxed);
         self.sender_flush_events.fetch_add(1, Ordering::Relaxed);
-        let mut current = self.active_sessions.load(Ordering::Relaxed);
-        while current > 0 {
-            match self.active_sessions.compare_exchange_weak(
-                current,
-                current - 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(actual) => current = actual,
-            }
-        }
+    }
+
+    pub fn on_session_ended(&self, backend: &'static str) {
+        decrement_counter(&self.active_sessions);
+        info!(
+            target: "activity_monitor",
+            backend,
+            active_sessions = self.active_sessions.load(Ordering::Relaxed),
+            "audio session ended"
+        );
     }
 
     pub fn on_backend_samples_written(&self, sample_count: usize) {
@@ -305,21 +311,19 @@ impl ActivityMonitor {
         }
     }
 
-    fn append_snapshot_jsonl(&self, reason: &str, connected_clients: u64) {
+    fn append_snapshot_jsonl(&self, reason: &str, connected_clients: u64, streaming_now: bool) {
         let Some(path) = &self.snapshot_path else {
             return;
         };
 
-        let ts_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(v) => v.as_millis() as u64,
-            Err(_) => 0,
-        };
+        let ts_ms = now_unix_ms();
 
         let payload = serde_json::json!({
             "timestamp_ms": ts_ms,
             "reason": reason,
             "started_sessions": self.started_sessions.load(Ordering::Relaxed),
             "active_sessions": self.active_sessions.load(Ordering::Relaxed),
+            "streaming_now": streaming_now,
             "connected_clients": connected_clients,
             "audio_callbacks": self.audio_callbacks.load(Ordering::Relaxed),
             "audio_samples_in": self.audio_samples_in.load(Ordering::Relaxed),
@@ -356,12 +360,43 @@ impl ActivityMonitor {
             warn!(path = %path.display(), error = %e, "failed to write activity snapshot file");
         }
     }
+
+    fn streaming_now(&self) -> bool {
+        let last = self.last_audio_callback_ms.load(Ordering::Relaxed);
+        if last == 0 {
+            return false;
+        }
+
+        now_unix_ms().saturating_sub(last) <= STREAMING_ACTIVITY_WINDOW_MS
+    }
+}
+
+fn now_unix_ms() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(v) => v.as_millis() as u64,
+        Err(_) => 0,
+    }
 }
 
 fn update_max(counter: &AtomicU64, value: u64) {
     let mut current = counter.load(Ordering::Relaxed);
     while value > current {
         match counter.compare_exchange_weak(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
+fn decrement_counter(counter: &AtomicU64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    while current > 0 {
+        match counter.compare_exchange_weak(
+            current,
+            current - 1,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
             Ok(_) => return,
             Err(actual) => current = actual,
         }
@@ -425,6 +460,7 @@ mod tests {
                 "reason",
                 "started_sessions",
                 "active_sessions",
+                "streaming_now",
                 "connected_clients",
                 "audio_callbacks",
                 "audio_samples_in",
@@ -478,6 +514,8 @@ mod tests {
         monitor.on_session_started(format, "null");
         monitor.on_audio_flushed();
         monitor.on_audio_flushed();
+        monitor.on_session_ended("null");
+        monitor.on_session_ended("null");
 
         monitor.on_client_connected("127.0.0.1:5001");
         monitor.on_client_disconnected("127.0.0.1:5001");
@@ -487,6 +525,25 @@ mod tests {
         assert_eq!(monitor.sender_connect_events.load(Ordering::Relaxed), 2);
         assert_eq!(monitor.sender_disconnect_events.load(Ordering::Relaxed), 1);
         assert_eq!(monitor.sender_reconnect_events.load(Ordering::Relaxed), 1);
+        assert_eq!(monitor.active_sessions.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn flush_does_not_end_session() {
+        let monitor = ActivityMonitor::new(1, None);
+        let format = AudioFormat {
+            codec: AudioCodec::Pcm,
+            bits: 32,
+            channels: 2,
+            sample_rate: 44_100,
+        };
+
+        monitor.on_session_started(format, "null");
+        monitor.on_audio_flushed();
+
+        assert_eq!(monitor.active_sessions.load(Ordering::Relaxed), 1);
+
+        monitor.on_session_ended("null");
         assert_eq!(monitor.active_sessions.load(Ordering::Relaxed), 0);
     }
 
@@ -505,5 +562,14 @@ mod tests {
         assert_eq!(monitor.sender_flush_events.load(Ordering::Relaxed), 1);
         assert_eq!(monitor.alsa_recovery_attempts.load(Ordering::Relaxed), 1);
         assert_eq!(monitor.alsa_recovery_failures.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn streaming_now_tracks_recent_audio_callbacks() {
+        let monitor = ActivityMonitor::new(1, None);
+
+        assert!(!monitor.streaming_now());
+        monitor.on_audio_callback(256);
+        assert!(monitor.streaming_now());
     }
 }

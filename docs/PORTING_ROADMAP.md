@@ -8,6 +8,7 @@ Deliver a Rust-native replacement for shairport-sync that uses shairplay-rust fo
 - Preserve operator workflows: config semantics and service behavior should feel familiar.
 - Ship in slices: produce usable milestones early, then expand toward full parity.
 - Treat AP2 timing behavior as a first-class validation axis.
+- Use upstream shairport-sync and shairplay-rust codebases as implementation reference baselines for parity work.
 
 ## Target Runtime Shape
 - Binary crate: shairport-sync-rs (daemon/service executable)

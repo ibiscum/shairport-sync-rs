@@ -54,6 +54,7 @@ Supported M0 config keys (TOML):
 - `activity_interval_secs` (integer; periodic activity snapshot interval in seconds, default `30`)
 - `activity_snapshot_path` (string, optional; JSONL file for machine-readable activity snapshots)
 - `log_format` (`"text"` or `"json"`; default `"text"`)
+- `log_filter` (string, optional; tracing filter directives, e.g. `"info,shairplay=debug"`)
 
 Linux ALSA CLI example:
 
@@ -103,13 +104,25 @@ cargo run -- \
 	--ap2-pairing-store-path /var/lib/shairport-sync-rs/ap2-pairings.toml
 ```
 
+AP1 + ALSA example (encryption `none,rsa,fairplay`):
+
+```bash
+cargo run -- \
+	--name "Shairport Sync RS AP1" \
+	--backend alsa \
+	--alsa-device default \
+	--airplay-mode ap1 \
+	--ap1-codecs pcm,alac \
+	--ap1-encryption none,rsa,fairplay
+```
+
 Integration test ALSA
 
 ```bash
 cargo run -- --backend pipe --pipe-path /tmp/ssr-ap1.pcm --airplay-mode ap1 --ap1-codecs pcm,alac --ap1-encryption none,rsa,fairplay
 
 
-RUST_LOG=info,shairplay=debug cargo run -- --name "Shairport Sync RS AP1" --port 5000 --backend alsa --alsa-device default --airplay-mode ap1 --ap1-codecs pcm,alac --ap1-encryption none --alsa-period-frames 1024 --alsa-buffer-frames 4096 --log-format json
+cargo run -- --name "Shairport Sync RS AP1" --port 5000 --backend alsa --alsa-device default --airplay-mode ap1 --ap1-codecs pcm,alac --ap1-encryption none --alsa-period-frames 1024 --alsa-buffer-frames 4096 --log-format json --log-filter info,shairplay=debug
 ```
 
 Example:
@@ -272,8 +285,8 @@ Activity monitor controls (CLI/TOML):
 
 Logging controls (CLI/TOML):
 
-- `RUST_LOG`: level/target filtering (default `info,shairplay=info`)
 - `log_format`: `text` (default) or `json`
+- `log_filter`: tracing filter directives (default derived from `diagnostics.log_verbosity`, e.g. `info,shairplay=info`)
 
 SSR environment variables (`defaults < TOML file < SSR_* env < CLI`):
 
@@ -297,6 +310,7 @@ SSR environment variables (`defaults < TOML file < SSR_* env < CLI`):
 - `SSR_ACTIVITY_INTERVAL_SECS`: integer (`u64`)
 - `SSR_ACTIVITY_SNAPSHOT_PATH`: string (JSONL output path)
 - `SSR_LOG_FORMAT`: `text` | `json`
+- `SSR_LOG_FILTER`: tracing filter directives, e.g. `info,shairplay=debug`
 
 Diagnostics env variables (parsed in the same precedence chain):
 
@@ -304,13 +318,23 @@ Diagnostics env variables (parsed in the same precedence chain):
 | --- | --- | --- |
 | `SSR_DIAGNOSTICS_DISABLE_RESEND_REQUESTS` | bool: `yes/no`, `true/false`, `1/0` | Parsed; currently logs a compatibility warning (not yet wired to protocol behavior). |
 | `SSR_DIAGNOSTICS_STATISTICS` | bool: `yes/no`, `true/false`, `1/0` | Enables/disables periodic activity snapshot logging task. |
-| `SSR_DIAGNOSTICS_LOG_VERBOSITY` | integer `u8` (expected `0..3`) | Maps to default log filter when `RUST_LOG` is unset. |
+| `SSR_DIAGNOSTICS_LOG_VERBOSITY` | integer `u8` (expected `0..3`) | Maps to the default log filter when `log_filter` / `SSR_LOG_FILTER` is not set. |
 | `SSR_DIAGNOSTICS_LOG_SHOW_FILE_AND_LINE` | bool: `yes/no`, `true/false`, `1/0` | Toggles file/line fields in logger output. |
 | `SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_STARTUP` | bool: `yes/no`, `true/false`, `1/0` | Uses uptime-style timestamp in log formatter. |
 | `SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_LAST_MESSAGE` | bool: `yes/no`, `true/false`, `1/0` | Uses delta-since-last-message timestamp formatter. |
 | `SSR_DIAGNOSTICS_DROP_THIS_FRACTION_OF_AUDIO_PACKETS` | float `0.0..1.0` | Parsed/validated; currently logs a compatibility warning (simulation not yet wired). |
 | `SSR_DIAGNOSTICS_RETAIN_COVER_ART` | bool: `yes/no`, `true/false`, `1/0` | Parsed; currently logs a compatibility warning (retention behavior not yet wired). |
 | `SSR_DIAGNOSTICS_GET_PLIST_METADATA` | bool: `yes/no`, `true/false`, `1/0` | Parsed; currently logs a compatibility warning (plist stream not yet wired). |
+
+When `diagnostics.log_verbosity` / `SSR_DIAGNOSTICS_LOG_VERBOSITY` is `3`,
+`shairport-sync-rs` also emits extra protocol diagnostics intended to mirror
+upstream high-verbosity troubleshooting workflows:
+
+- startup protocol summary (target: `protocol`)
+- AP1 mDNS advertisement intent summary (`cn`, `et`, `tp`, `pw`, `sr`, `ch`)
+- parameter/control exchange events (`set volume`, metadata updates, client connect/disconnect)
+
+These extra diagnostics are designed for interoperability debugging and can be noisy.
 
 Diagnostics examples:
 
@@ -323,10 +347,17 @@ cargo run -- --backend null
 
 # Text logs tuned for Docker tailing with periodic stats snapshots.
 SSR_LOG_FORMAT=text \
+SSR_DIAGNOSTICS_LOG_VERBOSITY=3 \
 SSR_DIAGNOSTICS_STATISTICS=yes \
-SSR_DIAGNOSTICS_LOG_SHOW_FILE_AND_LINE=no \
+SSR_DIAGNOSTICS_LOG_SHOW_FILE_AND_LINE=yes \
 SSR_DIAGNOSTICS_LOG_SHOW_TIME_SINCE_STARTUP=yes \
-cargo run -- --backend alsa --alsa-device default
+cargo run -- \
+	--name "Shairport Sync RS AP1" \
+	--backend alsa \
+	--alsa-device default \
+	--airplay-mode ap1 \
+	--ap1-codecs pcm,alac \
+	--ap1-encryption none,rsa
 ```
 
 Examples:
@@ -334,7 +365,7 @@ Examples:
 ```bash
 cargo run -- --backend null --log-format json
 cargo run -- --backend alsa --activity-interval-secs 10 --activity-snapshot-path /tmp/ssr-activity.jsonl
-SSR_LOG_FORMAT=json RUST_LOG=info,shairplay=debug cargo run -- --backend null
+SSR_LOG_FORMAT=json SSR_LOG_FILTER=info,shairplay=debug cargo run -- --backend null
 SSR_BACKEND=pipe SSR_PIPE_PATH=/tmp/ssr-env.pcm SSR_OUTPUT_FORMAT=s24le cargo run
 ```
 

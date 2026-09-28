@@ -39,6 +39,7 @@ pub fn make_handler_with_monitor(
             mode: None,
         })),
         first_ap2_stream_logged: AtomicBool::new(false),
+        protocol_log_verbosity: cfg.diagnostics.log_verbosity,
         activity_monitor: monitor,
     })
 }
@@ -58,6 +59,7 @@ struct AppAudioHandler {
     pipe_path: Option<String>,
     gain_state: Arc<Mutex<VolumeState>>,
     first_ap2_stream_logged: AtomicBool,
+    protocol_log_verbosity: u8,
     activity_monitor: Arc<ActivityMonitor>,
 }
 
@@ -78,6 +80,7 @@ struct GainSession {
     inner: Box<dyn AudioSession>,
     gain_state: Arc<Mutex<VolumeState>>,
     activity_monitor: Arc<ActivityMonitor>,
+    backend: &'static str,
     scratch: Vec<f32>,
 }
 
@@ -86,13 +89,21 @@ impl GainSession {
         inner: Box<dyn AudioSession>,
         gain_state: Arc<Mutex<VolumeState>>,
         activity_monitor: Arc<ActivityMonitor>,
+        backend: &'static str,
     ) -> Self {
         Self {
             inner,
             gain_state,
             activity_monitor,
+            backend,
             scratch: Vec::new(),
         }
+    }
+}
+
+impl Drop for GainSession {
+    fn drop(&mut self) {
+        self.activity_monitor.on_session_ended(self.backend);
     }
 }
 
@@ -253,6 +264,7 @@ impl AudioHandler for AppAudioHandler {
                 session,
                 Arc::clone(&self.gain_state),
                 Arc::clone(&self.activity_monitor),
+                backend,
             )),
             Err(e) => {
                 error!(error = %e, "failed to initialize audio backend, falling back to null backend");
@@ -264,6 +276,7 @@ impl AudioHandler for AppAudioHandler {
                     session,
                     Arc::clone(&self.gain_state),
                     Arc::clone(&self.activity_monitor),
+                    backend,
                 ))
             }
         }
@@ -283,6 +296,15 @@ impl AudioHandler for AppAudioHandler {
         debug!(raw_volume = volume, gain, ?mode, "volume update");
         self.activity_monitor
             .on_volume_event(volume, gain, volume_mode_label(mode));
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                raw_volume = volume,
+                gain,
+                mode = volume_mode_label(mode),
+                "AP1/RTSP parameter exchange: set volume"
+            );
+        }
 
         if gain <= 0.0 {
             debug!(raw_volume = volume, ?mode, "effective gain is mute");
@@ -292,16 +314,37 @@ impl AudioHandler for AppAudioHandler {
     fn on_metadata(&self, metadata: &TrackMetadata) {
         self.activity_monitor.on_metadata_update();
         debug!(?metadata, "track metadata update");
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                ?metadata,
+                "AP1/RTSP parameter exchange: metadata update"
+            );
+        }
     }
 
     fn on_client_connected(&self, addr: &str) {
         self.activity_monitor.on_client_connected(addr);
         info!(client = addr, "client connected");
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                client = addr,
+                "AP1/RTSP control connection established"
+            );
+        }
     }
 
     fn on_client_disconnected(&self, addr: &str) {
         self.activity_monitor.on_client_disconnected(addr);
         info!(client = addr, "client disconnected");
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                client = addr,
+                "AP1/RTSP control connection closed"
+            );
+        }
     }
 }
 
@@ -344,6 +387,7 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
             diagnostics: crate::config::DiagnosticsConfig {
                 disable_resend_requests: false,
                 statistics: false,
@@ -386,6 +430,7 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
             diagnostics: crate::config::DiagnosticsConfig {
                 disable_resend_requests: false,
                 statistics: false,
@@ -428,6 +473,7 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
             diagnostics: crate::config::DiagnosticsConfig {
                 disable_resend_requests: false,
                 statistics: false,
@@ -488,6 +534,7 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
             diagnostics: crate::config::DiagnosticsConfig {
                 disable_resend_requests: false,
                 statistics: false,
@@ -613,8 +660,12 @@ mod tests {
             gain: 0.5_f32,
             mode: Some(VolumeMode::Linear),
         }));
-        let mut session =
-            GainSession::new(inner, gain_state, Arc::new(ActivityMonitor::new(30, None)));
+        let mut session = GainSession::new(
+            inner,
+            gain_state,
+            Arc::new(ActivityMonitor::new(30, None)),
+            "test",
+        );
 
         session.audio_process(&[-1.0, -0.2, 0.2, 1.0]);
 

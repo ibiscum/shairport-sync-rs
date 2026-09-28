@@ -99,6 +99,12 @@ pub struct Cli {
 
     #[arg(long, value_enum, help = "Runtime log output format")]
     pub log_format: Option<LogFormat>,
+
+    #[arg(
+        long,
+        help = "Tracing filter directives, e.g. 'info,shairplay=debug'"
+    )]
+    pub log_filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize)]
@@ -178,6 +184,7 @@ pub struct AppConfig {
     pub activity_interval_secs: u64,
     pub activity_snapshot_path: Option<String>,
     pub log_format: LogFormat,
+    pub log_filter: Option<String>,
     pub diagnostics: DiagnosticsConfig,
 }
 
@@ -216,6 +223,7 @@ struct FileConfig {
     activity_interval_secs: Option<u64>,
     activity_snapshot_path: Option<String>,
     log_format: Option<LogFormat>,
+    log_filter: Option<String>,
 
     general: Option<GeneralSection>,
     audio: Option<AudioSection>,
@@ -282,6 +290,7 @@ struct ObservabilitySection {
     activity_interval_secs: Option<u64>,
     activity_snapshot_path: Option<String>,
     log_format: Option<LogFormat>,
+    log_filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -351,6 +360,7 @@ struct EnvConfig {
     activity_interval_secs: Option<u64>,
     activity_snapshot_path: Option<String>,
     log_format: Option<LogFormat>,
+    log_filter: Option<String>,
     diagnostics_disable_resend_requests: Option<bool>,
     diagnostics_statistics: Option<bool>,
     diagnostics_log_verbosity: Option<u8>,
@@ -399,6 +409,7 @@ impl EnvConfig {
         cfg.activity_interval_secs = parse_env_number::<u64>(&map, "SSR_ACTIVITY_INTERVAL_SECS")?;
         cfg.activity_snapshot_path = map.get("SSR_ACTIVITY_SNAPSHOT_PATH").cloned();
         cfg.log_format = parse_env_log_format(&map)?;
+        cfg.log_filter = map.get("SSR_LOG_FILTER").cloned();
         cfg.diagnostics_disable_resend_requests =
             parse_env_bool(&map, "SSR_DIAGNOSTICS_DISABLE_RESEND_REQUESTS")?;
         cfg.diagnostics_statistics = parse_env_bool(&map, "SSR_DIAGNOSTICS_STATISTICS")?;
@@ -628,6 +639,7 @@ impl Default for AppConfig {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: LogFormat::Text,
+            log_filter: None,
             diagnostics: DiagnosticsConfig {
                 disable_resend_requests: false,
                 statistics: false,
@@ -688,6 +700,7 @@ impl AppConfig {
             activity_interval_secs,
             activity_snapshot_path,
             log_format,
+            log_filter,
             general,
             audio,
             ap1,
@@ -755,6 +768,9 @@ impl AppConfig {
         }
         if let Some(v) = log_format {
             self.log_format = v;
+        }
+        if let Some(v) = log_filter {
+            self.log_filter = Some(v);
         }
 
         if let Some(section) = general {
@@ -869,6 +885,9 @@ impl AppConfig {
             if let Some(v) = section.log_format {
                 self.log_format = v;
             }
+            if let Some(v) = section.log_filter {
+                self.log_filter = Some(v);
+            }
         }
 
         if let Some(section) = diagnostics {
@@ -969,6 +988,9 @@ impl AppConfig {
         if let Some(v) = cli.log_format {
             self.log_format = v;
         }
+        if let Some(v) = &cli.log_filter {
+            self.log_filter = Some(v.clone());
+        }
     }
 
     fn apply_env(&mut self, env: EnvConfig) {
@@ -1031,6 +1053,9 @@ impl AppConfig {
         }
         if let Some(v) = env.log_format {
             self.log_format = v;
+        }
+        if let Some(v) = env.log_filter {
+            self.log_filter = Some(v);
         }
         if let Some(v) = env.diagnostics_disable_resend_requests {
             self.diagnostics.disable_resend_requests = v;
@@ -1160,6 +1185,13 @@ impl AppConfig {
         {
             return Err("activity_snapshot_path must not be empty when set".to_string());
         }
+        if self
+            .log_filter
+            .as_deref()
+            .is_some_and(|v| v.trim().is_empty())
+        {
+            return Err("log_filter must not be empty when set".to_string());
+        }
         if self.diagnostics.log_verbosity > 3 {
             return Err("diagnostics.log_verbosity must be between 0 and 3".to_string());
         }
@@ -1201,6 +1233,7 @@ mod tests {
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: LogFormat::Text,
+            log_filter: None,
             diagnostics: DiagnosticsConfig {
                 disable_resend_requests: false,
                 statistics: false,
@@ -1469,6 +1502,7 @@ airplay_mode = "ap1"
             activity_interval_secs: Some(12),
             activity_snapshot_path: Some("/tmp/activity-cli.jsonl".to_string()),
             log_format: Some(LogFormat::Json),
+            log_filter: None,
         };
 
         let loaded = AppConfig::load_with_env(&cli, EnvConfig::default())
@@ -1526,6 +1560,7 @@ airplay_mode = "ap1"
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
+            log_filter: None,
         };
 
         let err = AppConfig::load_with_env(&cli, EnvConfig::default())
@@ -1560,6 +1595,7 @@ airplay_mode = "ap1"
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
+            log_filter: None,
         };
 
         let err = AppConfig::load_with_env(&cli, EnvConfig::default())
@@ -1810,6 +1846,7 @@ log_format = "json"
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
+            log_filter: None,
         };
 
         let loaded = AppConfig::load_with_env(&cli, EnvConfig::default())
@@ -1884,6 +1921,7 @@ get_plist_metadata = "yes"
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
+            log_filter: None,
         };
 
         let loaded = AppConfig::load_with_env(&cli, EnvConfig::default())
@@ -1941,6 +1979,7 @@ get_plist_metadata = "no"
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
+            log_filter: None,
         };
 
         let env_cfg = EnvConfig::from_pairs(vec![
@@ -2001,6 +2040,7 @@ backend = "null"
 output_format = "f32le"
 activity_interval_secs = 10
 log_format = "text"
+log_filter = "info,shairplay=info"
 "#;
         fs::write(&path, toml).expect("failed to write temp config");
 
@@ -2026,6 +2066,7 @@ log_format = "text"
             activity_interval_secs: Some(14),
             activity_snapshot_path: None,
             log_format: Some(LogFormat::Text),
+            log_filter: Some("trace,shairplay=trace".to_string()),
         };
 
         let env_cfg = EnvConfig::from_pairs(vec![
@@ -2033,6 +2074,7 @@ log_format = "text"
             ("SSR_OUTPUT_FORMAT", "s24le"),
             ("SSR_ACTIVITY_INTERVAL_SECS", "12"),
             ("SSR_LOG_FORMAT", "json"),
+            ("SSR_LOG_FILTER", "debug,shairplay=debug"),
         ])
         .expect("env parse should succeed");
 
@@ -2043,6 +2085,10 @@ log_format = "text"
         assert!(matches!(loaded.backend, AudioBackend::Stdout));
         assert_eq!(loaded.activity_interval_secs, 14);
         assert_eq!(loaded.log_format, LogFormat::Text);
+        assert_eq!(
+            loaded.log_filter.as_deref(),
+            Some("trace,shairplay=trace")
+        );
 
         // Env beats file.
         assert_eq!(loaded.port, 7000);
@@ -2075,6 +2121,7 @@ log_format = "text"
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
+            log_filter: None,
         };
 
         let env_cfg = EnvConfig::from_pairs(vec![
@@ -2082,6 +2129,7 @@ log_format = "text"
             ("SSR_BACKEND", "pipe"),
             ("SSR_PIPE_PATH", "/tmp/from-env.pcm"),
             ("SSR_ACTIVITY_SNAPSHOT_PATH", "/tmp/activity-env.jsonl"),
+            ("SSR_LOG_FILTER", "debug,shairplay=debug"),
         ])
         .expect("env parse should succeed");
 
@@ -2095,6 +2143,44 @@ log_format = "text"
             loaded.activity_snapshot_path.as_deref(),
             Some("/tmp/activity-env.jsonl")
         );
+        assert_eq!(
+            loaded.log_filter.as_deref(),
+            Some("debug,shairplay=debug")
+        );
+    }
+
+    #[test]
+    fn load_rejects_empty_log_filter_from_env() {
+        let cli = Cli {
+            config: None,
+            name: None,
+            port: None,
+            backend: None,
+            output_format: None,
+            alsa_device: None,
+            alsa_period_frames: None,
+            alsa_buffer_frames: None,
+            pipe_path: None,
+            password: None,
+            max_clients: None,
+            raop_output_sample_rate: None,
+            raop_output_max_channels: None,
+            ap1_codecs: None,
+            ap1_encryption: None,
+            airplay_mode: None,
+            ap2_pin: None,
+            ap2_pairing_store_path: None,
+            activity_interval_secs: None,
+            activity_snapshot_path: None,
+            log_format: None,
+            log_filter: None,
+        };
+
+        let env_cfg = EnvConfig::from_pairs(vec![("SSR_LOG_FILTER", "   ")])
+            .expect("env parse should succeed");
+        let err = AppConfig::load_with_env(&cli, env_cfg)
+            .expect_err("blank log filter should fail validation");
+        assert!(err.contains("log_filter"));
     }
 
     #[test]
@@ -2121,6 +2207,7 @@ log_format = "text"
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
+            log_filter: None,
         };
 
         let env_err = EnvConfig::from_pairs(vec![("SSR_PORT", "abc")])

@@ -95,8 +95,20 @@ async fn run() -> Result<(), String> {
 }
 
 fn init_tracing(cfg: &AppConfig) {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_filter_for_verbosity(cfg.diagnostics.log_verbosity)));
+    let default_filter = default_filter_for_verbosity(cfg.diagnostics.log_verbosity);
+    let env_filter = match cfg.log_filter.as_deref() {
+        Some(raw) => match EnvFilter::try_new(raw) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "invalid log_filter '{}': {e}; falling back to '{}'",
+                    raw, default_filter
+                );
+                EnvFilter::new(default_filter)
+            }
+        },
+        None => EnvFilter::new(default_filter),
+    };
     let log_format = cfg.log_format;
     let show_file_and_line = cfg.diagnostics.log_show_file_and_line;
     let use_uptime = cfg.diagnostics.log_show_time_since_startup;
@@ -255,6 +267,10 @@ fn apply_raop_protocol_config(
     mut builder: RaopServerBuilder,
     cfg: &AppConfig,
 ) -> Result<RaopServerBuilder, String> {
+    if cfg.diagnostics.log_verbosity >= 3 {
+        log_protocol_startup(cfg);
+    }
+
     builder = match cfg.airplay_mode {
         AirPlayModeConfig::Ap1 => builder.mode(AirPlayMode::AirPlay1),
         AirPlayModeConfig::Ap2 => builder.mode(AirPlayMode::AirPlay2),
@@ -302,4 +318,61 @@ fn apply_raop_protocol_config(
     }
 
     Ok(builder)
+}
+
+fn log_protocol_startup(cfg: &AppConfig) {
+    info!(
+        target: "protocol",
+        name = %cfg.name,
+        port = cfg.port,
+        mode = ?cfg.airplay_mode,
+        password = cfg.password.is_some(),
+        "protocol startup configuration"
+    );
+
+    if cfg.airplay_mode == AirPlayModeConfig::Ap1 {
+        let codec_advert = match cfg.ap1_codecs.as_deref() {
+            Some(values) => values
+                .iter()
+                .map(ap1_codec_label)
+                .collect::<Vec<_>>()
+                .join(","),
+            None => "default(shairplay)".to_string(),
+        };
+
+        let encryption_advert = match cfg.ap1_encryption.as_deref() {
+            Some(values) => values
+                .iter()
+                .map(ap1_encryption_label)
+                .collect::<Vec<_>>()
+                .join(","),
+            None => "default(shairplay)".to_string(),
+        };
+
+        info!(
+            target: "protocol",
+            txt_cn = %codec_advert,
+            txt_et = %encryption_advert,
+            txt_tp = "TCP,UDP",
+            txt_pw = if cfg.password.is_some() { "true" } else { "false" },
+            txt_sr = cfg.raop_output_sample_rate.unwrap_or(44_100),
+            txt_ch = cfg.raop_output_max_channels.unwrap_or(2),
+            "AP1 mDNS advertisement intent"
+        );
+    }
+}
+
+fn ap1_codec_label(codec: &Ap1CodecConfig) -> &'static str {
+    match codec {
+        Ap1CodecConfig::Pcm => "pcm",
+        Ap1CodecConfig::Alac => "alac",
+    }
+}
+
+fn ap1_encryption_label(mode: &Ap1EncryptionConfig) -> &'static str {
+    match mode {
+        Ap1EncryptionConfig::None => "none",
+        Ap1EncryptionConfig::Rsa => "rsa",
+        Ap1EncryptionConfig::Fairplay => "fairplay",
+    }
 }
