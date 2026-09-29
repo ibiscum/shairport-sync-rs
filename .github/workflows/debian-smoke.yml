@@ -36,6 +36,7 @@ jobs:
 
       - name: Ensure scripts are executable
         run: |
+          chmod +x scripts/ap1-soak.sh
           chmod +x scripts/debian-smoke-test-json.sh
 
       - name: Run M0 runtime integration test
@@ -58,6 +59,14 @@ jobs:
       - name: Run M0 smoke regression test
         run: |
           cargo test --test m0_smoke_regression -- --ignored --nocapture
+
+      - name: Run AP1 reconnect and gapless diagnostics regression test
+        run: |
+          cargo test observability::tests::reconnect_and_gapless_regression_counters_progress_as_expected -- --nocapture
+
+      - name: Run AP1 soak harness regression test
+        run: |
+          cargo test --test ap1_soak_harness_regression -- --ignored --nocapture
 
   smoke-debug-artifacts:
     name: Upload Smoke Debug Logs
@@ -90,6 +99,7 @@ jobs:
 
       - name: Ensure scripts are executable
         run: |
+          chmod +x scripts/ap1-soak.sh
           chmod +x scripts/debian-smoke-test-json.sh
 
       - name: Re-run smoke test to capture debug log

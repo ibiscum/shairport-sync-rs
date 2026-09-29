@@ -22,10 +22,6 @@ trait BackendFactory: Send + Sync {
     ) -> Result<Box<dyn AudioSession>, String>;
 }
 
-pub fn make_handler(cfg: &AppConfig) -> Arc<dyn AudioHandler> {
-    make_handler_with_monitor(cfg, Arc::new(ActivityMonitor::new(30, None)))
-}
-
 pub fn make_handler_with_monitor(
     cfg: &AppConfig,
     monitor: Arc<ActivityMonitor>,
@@ -43,8 +39,14 @@ pub fn make_handler_with_monitor(
             mode: None,
         })),
         first_ap2_stream_logged: AtomicBool::new(false),
+        protocol_log_verbosity: cfg.diagnostics.log_verbosity,
         activity_monitor: monitor,
     })
+}
+
+#[cfg(test)]
+fn make_handler(cfg: &AppConfig) -> Arc<dyn AudioHandler> {
+    make_handler_with_monitor(cfg, Arc::new(ActivityMonitor::new(30, None)))
 }
 
 struct AppAudioHandler {
@@ -57,6 +59,7 @@ struct AppAudioHandler {
     pipe_path: Option<String>,
     gain_state: Arc<Mutex<VolumeState>>,
     first_ap2_stream_logged: AtomicBool,
+    protocol_log_verbosity: u8,
     activity_monitor: Arc<ActivityMonitor>,
 }
 
@@ -77,6 +80,7 @@ struct GainSession {
     inner: Box<dyn AudioSession>,
     gain_state: Arc<Mutex<VolumeState>>,
     activity_monitor: Arc<ActivityMonitor>,
+    backend: &'static str,
     scratch: Vec<f32>,
 }
 
@@ -85,13 +89,21 @@ impl GainSession {
         inner: Box<dyn AudioSession>,
         gain_state: Arc<Mutex<VolumeState>>,
         activity_monitor: Arc<ActivityMonitor>,
+        backend: &'static str,
     ) -> Self {
         Self {
             inner,
             gain_state,
             activity_monitor,
+            backend,
             scratch: Vec::new(),
         }
+    }
+}
+
+impl Drop for GainSession {
+    fn drop(&mut self) {
+        self.activity_monitor.on_session_ended(self.backend);
     }
 }
 
@@ -192,6 +204,15 @@ fn volume_to_linear(raw_volume: f32, current_mode: Option<VolumeMode>) -> (f32, 
     (gain, mode)
 }
 
+fn volume_mode_label(mode: Option<VolumeMode>) -> &'static str {
+    match mode {
+        Some(VolumeMode::Db) => "db",
+        Some(VolumeMode::Linear) => "linear",
+        Some(VolumeMode::Percent) => "percent",
+        None => "unknown",
+    }
+}
+
 impl AudioHandler for AppAudioHandler {
     fn audio_init(&self, format: AudioFormat) -> Box<dyn AudioSession> {
         if self.airplay_mode == AirPlayModeConfig::Ap2
@@ -243,6 +264,7 @@ impl AudioHandler for AppAudioHandler {
                 session,
                 Arc::clone(&self.gain_state),
                 Arc::clone(&self.activity_monitor),
+                backend,
             )),
             Err(e) => {
                 error!(error = %e, "failed to initialize audio backend, falling back to null backend");
@@ -254,6 +276,7 @@ impl AudioHandler for AppAudioHandler {
                     session,
                     Arc::clone(&self.gain_state),
                     Arc::clone(&self.activity_monitor),
+                    backend,
                 ))
             }
         }
@@ -271,6 +294,17 @@ impl AudioHandler for AppAudioHandler {
             mode = Some(new_mode);
         }
         debug!(raw_volume = volume, gain, ?mode, "volume update");
+        self.activity_monitor
+            .on_volume_event(volume, gain, volume_mode_label(mode));
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                raw_volume = volume,
+                gain,
+                mode = volume_mode_label(mode),
+                "AP1/RTSP parameter exchange: set volume"
+            );
+        }
 
         if gain <= 0.0 {
             debug!(raw_volume = volume, ?mode, "effective gain is mute");
@@ -280,16 +314,37 @@ impl AudioHandler for AppAudioHandler {
     fn on_metadata(&self, metadata: &TrackMetadata) {
         self.activity_monitor.on_metadata_update();
         debug!(?metadata, "track metadata update");
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                ?metadata,
+                "AP1/RTSP parameter exchange: metadata update"
+            );
+        }
     }
 
     fn on_client_connected(&self, addr: &str) {
         self.activity_monitor.on_client_connected(addr);
         info!(client = addr, "client connected");
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                client = addr,
+                "AP1/RTSP control connection established"
+            );
+        }
     }
 
     fn on_client_disconnected(&self, addr: &str) {
         self.activity_monitor.on_client_disconnected(addr);
         info!(client = addr, "client disconnected");
+        if self.protocol_log_verbosity >= 3 {
+            info!(
+                target: "protocol",
+                client = addr,
+                "AP1/RTSP control connection closed"
+            );
+        }
     }
 }
 
@@ -329,9 +384,22 @@ mod tests {
             airplay_mode: crate::config::AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);
@@ -360,9 +428,22 @@ mod tests {
             airplay_mode: crate::config::AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);
@@ -391,9 +472,22 @@ mod tests {
             airplay_mode: crate::config::AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);
@@ -440,9 +534,22 @@ mod tests {
             airplay_mode: crate::config::AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: crate::config::LogFormat::Text,
+            log_filter: None,
+            diagnostics: crate::config::DiagnosticsConfig {
+                disable_resend_requests: false,
+                statistics: false,
+                log_verbosity: 0,
+                log_show_file_and_line: true,
+                log_show_time_since_startup: false,
+                log_show_time_since_last_message: true,
+                drop_this_fraction_of_audio_packets: 0.0,
+                retain_cover_art: false,
+                get_plist_metadata: false,
+            },
         };
 
         let handler = make_handler(&cfg);
@@ -557,8 +664,12 @@ mod tests {
             gain: 0.5_f32,
             mode: Some(VolumeMode::Linear),
         }));
-        let mut session =
-            GainSession::new(inner, gain_state, Arc::new(ActivityMonitor::new(30, None)));
+        let mut session = GainSession::new(
+            inner,
+            gain_state,
+            Arc::new(ActivityMonitor::new(30, None)),
+            "test",
+        );
 
         session.audio_process(&[-1.0, -0.2, 0.2, 1.0]);
 

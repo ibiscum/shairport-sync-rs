@@ -16,12 +16,15 @@ BACKEND="${BACKEND:-null}"
 LOG_FILE="${LOG_FILE:-/tmp/shairport-sync-rs-smoke.log}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-20}"
 MDNS_TIMEOUT_SECONDS="${MDNS_TIMEOUT_SECONDS:-10}"
+HOLD_SECONDS="${HOLD_SECONDS:-0}"
 BUILD_FIRST="${BUILD_FIRST:-1}"
 AP1_EXPECT_CN="${AP1_EXPECT_CN:-}"
 AP1_EXPECT_ET="${AP1_EXPECT_ET:-}"
 AIRPLAY_MODE="${AIRPLAY_MODE:-}"
 AP1_CODECS="${AP1_CODECS:-}"
 AP1_ENCRYPTION="${AP1_ENCRYPTION:-}"
+ACTIVITY_INTERVAL_SECS="${ACTIVITY_INTERVAL_SECS:-}"
+ACTIVITY_SNAPSHOT_PATH="${ACTIVITY_SNAPSHOT_PATH:-}"
 
 APP_PID=""
 MDNS_MATCH_LINE=""
@@ -97,6 +100,12 @@ fi
 if [[ -n "${AP1_ENCRYPTION}" ]]; then
     run_args+=(--ap1-encryption "${AP1_ENCRYPTION}")
 fi
+if [[ -n "${ACTIVITY_INTERVAL_SECS}" ]]; then
+    run_args+=(--activity-interval-secs "${ACTIVITY_INTERVAL_SECS}")
+fi
+if [[ -n "${ACTIVITY_SNAPSHOT_PATH}" ]]; then
+    run_args+=(--activity-snapshot-path "${ACTIVITY_SNAPSHOT_PATH}")
+fi
 RUST_LOG="${RUST_LOG:-info}" cargo run -- "${run_args[@]}" >"${LOG_FILE}" 2>&1 &
 APP_PID=$!
 
@@ -158,6 +167,16 @@ if [[ -n "${AP1_EXPECT_ET}" ]]; then
         exit 1
     fi
     echo "AP1 et check passed: ${actual_et}"
+fi
+
+if [[ "${HOLD_SECONDS}" != "0" ]]; then
+    echo "Holding AP1 server for ${HOLD_SECONDS}s to observe stability..."
+    sleep "${HOLD_SECONDS}"
+    if ! kill -0 "${APP_PID}" >/dev/null 2>&1; then
+        echo "Server exited during hold window (${HOLD_SECONDS}s)." >&2
+        exit 1
+    fi
+    echo "Hold check passed: server remained alive for ${HOLD_SECONDS}s."
 fi
 
 echo "Stopping server cleanly..."

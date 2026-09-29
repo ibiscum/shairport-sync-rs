@@ -8,6 +8,7 @@ Deliver a Rust-native replacement for shairport-sync that uses shairplay-rust fo
 - Preserve operator workflows: config semantics and service behavior should feel familiar.
 - Ship in slices: produce usable milestones early, then expand toward full parity.
 - Treat AP2 timing behavior as a first-class validation axis.
+- Use upstream shairport-sync and shairplay-rust codebases as implementation reference baselines for parity work.
 
 ## Target Runtime Shape
 - Binary crate: shairport-sync-rs (daemon/service executable)
@@ -66,7 +67,7 @@ Acceptance:
 ### M4 - Service, Packaging, and Compatibility
 Deliverables:
 - Systemd service units and install layout.
-- Config compatibility layer for common shairport-sync.conf fields.
+- TOML-first migration mapping guide from common shairport-sync.conf fields.
 - Migration guide and known-differences matrix.
 
 Acceptance:
@@ -82,12 +83,21 @@ Deliverables:
 Acceptance:
 - Defined parity checklist from PARITY_MATRIX.md signed off.
 
-## Work Breakdown by Team Stream
+## Work Breakdown
 
 ### Stream A: Runtime and Config
 - Implement config parser compatible with key shairport-sync.conf fields.
+  Status: DONE (TOML target). TOML config supports both flat keys and sectioned layout (for example `[general]`, `[audio]`, `[audio.alsa]`, `[audio.pipewire]`, `[ap1]`, `[ap2]`, `[observability]`, `[diagnostics]`). Native legacy `shairport-sync.conf` parser/compatibility is intentionally out of scope.
 - Define precedence model: defaults < file < environment < CLI.
+  Status: DONE. Effective config load path now enforces deterministic precedence in this order.
 - Add validation with clear operator-facing errors.
+  Status: DONE for currently wired parameters, including diagnostics value bounds (for example verbosity range and packet-drop fraction range) with explicit error messages.
+
+Current Stream A note:
+- Diagnostics configuration parity has advanced: `diagnostics` section keys and matching `SSR_DIAGNOSTICS_*` env overrides are parsed and validated.
+- Logging-affecting diagnostics options are wired for both text and json log formats.
+- Some diagnostics controls are accepted for compatibility but still pending functional wiring in runtime/protocol paths.
+- Configuration format decision: shairport-sync-rs is TOML-first; migration is handled via documented mapping and known differences, not via a native legacy parser.
 
 ### Stream B: Audio Backends
 - Build backend trait with pluggable implementations.
