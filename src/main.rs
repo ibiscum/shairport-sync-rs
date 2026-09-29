@@ -282,6 +282,10 @@ fn apply_raop_protocol_config(
         builder = builder.pairing_store(Arc::new(store));
     }
 
+    if let Some(path) = cfg.rsa_key_path.as_deref() {
+        builder = builder.rsa_key_path(path);
+    }
+
     if let Some(rate) = cfg.raop_output_sample_rate {
         builder = builder.output_sample_rate(rate);
     }

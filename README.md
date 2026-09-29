@@ -56,6 +56,7 @@ Supported M0 config keys (TOML):
 - `airplay_mode` (`"ap1"` or `"ap2"`; default `"ap2"`)
 - `ap2_pin` (string, optional; requires `airplay_mode = "ap2"`)
 - `ap2_pairing_store_path` (string, optional; requires `airplay_mode = "ap2"`; persists AP2 pairings/identity)
+- `rsa_key_path` (string, optional; explicit RAOP RSA private key PEM file path; forwarded to shairplay as `RaopServerBuilder::rsa_key_path`)
 - `activity_interval_secs` (integer; periodic activity snapshot interval in seconds, default `30`)
 - `activity_snapshot_path` (string, optional; JSONL file for machine-readable activity snapshots)
 - `log_format` (`"text"` or `"json"`; default `"text"`)
@@ -151,6 +152,7 @@ max_clients = 10
 backend = "alsa"
 output_format = "f32le"
 airplay_mode = "ap2"
+rsa_key_path = "/var/lib/shairport-sync-rs/airport.key"
 
 [audio.alsa]
 device = "default"
@@ -312,6 +314,7 @@ SSR environment variables (`defaults < TOML file < SSR_* env < CLI`):
 - `SSR_AIRPLAY_MODE`: `ap1` | `ap2`
 - `SSR_AP2_PIN`: string
 - `SSR_AP2_PAIRING_STORE_PATH`: string
+- `SSR_RSA_KEY_PATH`: string (explicit RAOP RSA private key PEM file path)
 - `SSR_ACTIVITY_INTERVAL_SECS`: integer (`u64`)
 - `SSR_ACTIVITY_SNAPSHOT_PATH`: string (JSONL output path)
 - `SSR_LOG_FORMAT`: `text` | `json`

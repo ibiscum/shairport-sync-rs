@@ -91,6 +91,13 @@ pub struct Cli {
     #[arg(long, help = "Path to AP2 pairing persistence file")]
     pub ap2_pairing_store_path: Option<String>,
 
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "Path to RAOP RSA private key PEM file (overrides SHAIRPLAY_RSA_KEY_PATH)"
+    )]
+    pub rsa_key_path: Option<String>,
+
     #[arg(long, help = "Activity snapshot interval in seconds")]
     pub activity_interval_secs: Option<u64>,
 
@@ -181,6 +188,7 @@ pub struct AppConfig {
     pub airplay_mode: AirPlayModeConfig,
     pub ap2_pin: Option<String>,
     pub ap2_pairing_store_path: Option<String>,
+    pub rsa_key_path: Option<String>,
     pub activity_interval_secs: u64,
     pub activity_snapshot_path: Option<String>,
     pub log_format: LogFormat,
@@ -220,6 +228,7 @@ struct FileConfig {
     airplay_mode: Option<AirPlayModeConfig>,
     ap2_pin: Option<String>,
     ap2_pairing_store_path: Option<String>,
+    rsa_key_path: Option<String>,
     activity_interval_secs: Option<u64>,
     activity_snapshot_path: Option<String>,
     log_format: Option<LogFormat>,
@@ -252,6 +261,7 @@ struct AudioSection {
     raop_output_sample_rate: Option<u32>,
     raop_output_max_channels: Option<u8>,
     airplay_mode: Option<AirPlayModeConfig>,
+    rsa_key_path: Option<String>,
     alsa: Option<AudioAlsaSection>,
     pipewire: Option<AudioPipewireSection>,
 }
@@ -357,6 +367,7 @@ struct EnvConfig {
     airplay_mode: Option<AirPlayModeConfig>,
     ap2_pin: Option<String>,
     ap2_pairing_store_path: Option<String>,
+    rsa_key_path: Option<String>,
     activity_interval_secs: Option<u64>,
     activity_snapshot_path: Option<String>,
     log_format: Option<LogFormat>,
@@ -406,6 +417,7 @@ impl EnvConfig {
         cfg.airplay_mode = parse_env_airplay_mode(&map)?;
         cfg.ap2_pin = map.get("SSR_AP2_PIN").cloned();
         cfg.ap2_pairing_store_path = map.get("SSR_AP2_PAIRING_STORE_PATH").cloned();
+        cfg.rsa_key_path = map.get("SSR_RSA_KEY_PATH").cloned();
         cfg.activity_interval_secs = parse_env_number::<u64>(&map, "SSR_ACTIVITY_INTERVAL_SECS")?;
         cfg.activity_snapshot_path = map.get("SSR_ACTIVITY_SNAPSHOT_PATH").cloned();
         cfg.log_format = parse_env_log_format(&map)?;
@@ -636,6 +648,7 @@ impl Default for AppConfig {
             airplay_mode: AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: LogFormat::Text,
@@ -697,6 +710,7 @@ impl AppConfig {
             airplay_mode,
             ap2_pin,
             ap2_pairing_store_path,
+            rsa_key_path,
             activity_interval_secs,
             activity_snapshot_path,
             log_format,
@@ -760,6 +774,9 @@ impl AppConfig {
         if let Some(v) = ap2_pairing_store_path {
             self.ap2_pairing_store_path = Some(v);
         }
+        if let Some(v) = rsa_key_path {
+            self.rsa_key_path = Some(v);
+        }
         if let Some(v) = activity_interval_secs {
             self.activity_interval_secs = v;
         }
@@ -799,6 +816,7 @@ impl AppConfig {
                 raop_output_sample_rate,
                 raop_output_max_channels,
                 airplay_mode,
+                rsa_key_path,
                 alsa,
                 pipewire,
             } = section;
@@ -829,6 +847,9 @@ impl AppConfig {
             }
             if let Some(v) = airplay_mode {
                 self.airplay_mode = v;
+            }
+            if let Some(v) = rsa_key_path {
+                self.rsa_key_path = Some(v);
             }
 
             if let Some(alsa_section) = alsa {
@@ -979,6 +1000,9 @@ impl AppConfig {
         if let Some(v) = &cli.ap2_pairing_store_path {
             self.ap2_pairing_store_path = Some(v.clone());
         }
+        if let Some(v) = &cli.rsa_key_path {
+            self.rsa_key_path = Some(v.clone());
+        }
         if let Some(v) = cli.activity_interval_secs {
             self.activity_interval_secs = v;
         }
@@ -1044,6 +1068,9 @@ impl AppConfig {
         }
         if let Some(v) = env.ap2_pairing_store_path {
             self.ap2_pairing_store_path = Some(v);
+        }
+        if let Some(v) = env.rsa_key_path {
+            self.rsa_key_path = Some(v);
         }
         if let Some(v) = env.activity_interval_secs {
             self.activity_interval_secs = v;
@@ -1135,6 +1162,11 @@ impl AppConfig {
             if self.airplay_mode != AirPlayModeConfig::Ap2 {
                 return Err("ap2_pairing_store_path requires airplay_mode=ap2".to_string());
             }
+        }
+        if let Some(path) = self.rsa_key_path.as_deref()
+            && path.trim().is_empty()
+        {
+            return Err("rsa_key_path must not be empty when set".to_string());
         }
         #[cfg(target_os = "linux")]
         {
@@ -1230,6 +1262,7 @@ mod tests {
             airplay_mode: AirPlayModeConfig::Ap2,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: 30,
             activity_snapshot_path: None,
             log_format: LogFormat::Text,
@@ -1393,6 +1426,17 @@ mod tests {
         assert!(err.contains("airplay_mode=ap2"));
     }
 
+    #[test]
+    fn validate_rejects_empty_rsa_key_path() {
+        let mut cfg = valid_base();
+        cfg.rsa_key_path = Some("   ".to_string());
+
+        let err = cfg
+            .validate()
+            .expect_err("blank rsa_key_path should fail validation");
+        assert!(err.contains("rsa_key_path"));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn validate_rejects_alsa_with_non_f32le_output() {
@@ -1477,6 +1521,7 @@ raop_output_max_channels = 2
 ap1_codecs = ["pcm", "alac"]
 ap1_encryption = ["none", "rsa"]
 airplay_mode = "ap1"
+rsa_key_path = "/tmp/from-file-airport.key"
 "#;
         fs::write(&path, toml).expect("failed to write temp config");
 
@@ -1499,6 +1544,7 @@ airplay_mode = "ap1"
             airplay_mode: Some(AirPlayModeConfig::Ap1),
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: Some("/tmp/from-cli-airport.key".to_string()),
             activity_interval_secs: Some(12),
             activity_snapshot_path: Some("/tmp/activity-cli.jsonl".to_string()),
             log_format: Some(LogFormat::Json),
@@ -1524,6 +1570,7 @@ airplay_mode = "ap1"
         assert_eq!(loaded.airplay_mode, AirPlayModeConfig::Ap1);
         assert!(loaded.ap2_pin.is_none());
         assert!(loaded.ap2_pairing_store_path.is_none());
+        assert_eq!(loaded.rsa_key_path.as_deref(), Some("/tmp/from-cli-airport.key"));
         assert_eq!(loaded.activity_interval_secs, 12);
         assert_eq!(
             loaded.activity_snapshot_path.as_deref(),
@@ -1557,6 +1604,7 @@ airplay_mode = "ap1"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
@@ -1592,6 +1640,7 @@ airplay_mode = "ap1"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
@@ -1805,6 +1854,7 @@ backend = "pipe"
 output_format = "s24le"
 pipe_path = "/tmp/sectioned.pcm"
 airplay_mode = "ap1"
+rsa_key_path = "/tmp/sectioned-airport.key"
 raop_output_sample_rate = 48000
 raop_output_max_channels = 2
 
@@ -1843,6 +1893,7 @@ log_format = "json"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
@@ -1862,6 +1913,7 @@ log_format = "json"
         assert_eq!(loaded.alsa_period_frames, Some(2048));
         assert_eq!(loaded.alsa_buffer_frames, Some(8192));
         assert_eq!(loaded.airplay_mode, AirPlayModeConfig::Ap1);
+        assert_eq!(loaded.rsa_key_path.as_deref(), Some("/tmp/sectioned-airport.key"));
         assert_eq!(loaded.raop_output_sample_rate, Some(48_000));
         assert_eq!(loaded.raop_output_max_channels, Some(2));
         assert_eq!(
@@ -1918,6 +1970,7 @@ get_plist_metadata = "yes"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
@@ -1976,6 +2029,7 @@ get_plist_metadata = "no"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
@@ -2038,6 +2092,7 @@ name = "From File"
 port = 6000
 backend = "null"
 output_format = "f32le"
+rsa_key_path = "/tmp/from-file-airport.key"
 activity_interval_secs = 10
 log_format = "text"
 log_filter = "info,shairplay=info"
@@ -2063,6 +2118,7 @@ log_filter = "info,shairplay=info"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: Some("/tmp/from-cli-airport.key".to_string()),
             activity_interval_secs: Some(14),
             activity_snapshot_path: None,
             log_format: Some(LogFormat::Text),
@@ -2072,6 +2128,7 @@ log_filter = "info,shairplay=info"
         let env_cfg = EnvConfig::from_pairs(vec![
             ("SSR_PORT", "7000"),
             ("SSR_OUTPUT_FORMAT", "s24le"),
+            ("SSR_RSA_KEY_PATH", "/tmp/from-env-airport.key"),
             ("SSR_ACTIVITY_INTERVAL_SECS", "12"),
             ("SSR_LOG_FORMAT", "json"),
             ("SSR_LOG_FILTER", "debug,shairplay=debug"),
@@ -2089,6 +2146,7 @@ log_filter = "info,shairplay=info"
             loaded.log_filter.as_deref(),
             Some("trace,shairplay=trace")
         );
+        assert_eq!(loaded.rsa_key_path.as_deref(), Some("/tmp/from-cli-airport.key"));
 
         // Env beats file.
         assert_eq!(loaded.port, 7000);
@@ -2118,6 +2176,7 @@ log_filter = "info,shairplay=info"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
@@ -2128,6 +2187,7 @@ log_filter = "info,shairplay=info"
             ("SSR_NAME", "From Env"),
             ("SSR_BACKEND", "pipe"),
             ("SSR_PIPE_PATH", "/tmp/from-env.pcm"),
+            ("SSR_RSA_KEY_PATH", "/tmp/from-env-airport.key"),
             ("SSR_ACTIVITY_SNAPSHOT_PATH", "/tmp/activity-env.jsonl"),
             ("SSR_LOG_FILTER", "debug,shairplay=debug"),
         ])
@@ -2147,6 +2207,7 @@ log_filter = "info,shairplay=info"
             loaded.log_filter.as_deref(),
             Some("debug,shairplay=debug")
         );
+        assert_eq!(loaded.rsa_key_path.as_deref(), Some("/tmp/from-env-airport.key"));
     }
 
     #[test]
@@ -2170,6 +2231,7 @@ log_filter = "info,shairplay=info"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
@@ -2204,6 +2266,7 @@ log_filter = "info,shairplay=info"
             airplay_mode: None,
             ap2_pin: None,
             ap2_pairing_store_path: None,
+            rsa_key_path: None,
             activity_interval_secs: None,
             activity_snapshot_path: None,
             log_format: None,
